@@ -1,0 +1,56 @@
+<!-- # UNFILED-IP -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ECZIS Forensic Viewer</title>
+<style>
+:root{color-scheme:dark;font-family:Inter,Segoe UI,Arial,sans-serif;background:#071018;color:#e6edf3}
+*{box-sizing:border-box}body{margin:0}.app{display:grid;grid-template-columns:minmax(0,1fr) 330px;height:100vh}
+main{display:flex;flex-direction:column;min-width:0}.toolbar{padding:12px 16px;background:#0d1822;border-bottom:1px solid #253443;display:flex;gap:18px;align-items:center;flex-wrap:wrap}
+.viewport{position:relative;overflow:auto;flex:1;background:radial-gradient(circle at center,#182735,#05090d)}
+.stage{position:relative;transform-origin:0 0;display:inline-block;margin:28px;box-shadow:0 12px 55px #000}
+.stage img{display:block;image-rendering:auto}.overlay{position:absolute;inset:0;pointer-events:none}.hidden{display:none!important}
+aside{padding:20px;background:#0b151e;border-left:1px solid #253443;overflow:auto}h1{font-size:19px;margin:0 0 6px}.muted{color:#96a7b7;font-size:13px;line-height:1.45}.card{background:#111f2b;border:1px solid #263849;border-radius:10px;padding:14px;margin-top:14px}
+.legend{display:grid;grid-template-columns:18px 1fr;gap:8px 10px;align-items:center}.swatch{width:16px;height:16px;border-radius:3px}.m{background:#22c55e}.r{background:#2563eb}.i{background:#f59e0b}.u{background:#141414;border:1px solid #555}
+label{font-size:13px}input[type=range]{width:170px}button{background:#152838;color:#e6edf3;border:1px solid #385067;border-radius:7px;padding:7px 10px;cursor:pointer}button.active{background:#1f4b70}.value{font-family:Consolas,monospace;color:#b9d9f2;font-size:12px;word-break:break-all}
+.badge{display:inline-block;padding:4px 8px;border-radius:99px;background:#163249;font-size:12px;margin-bottom:8px}
+</style>
+</head>
+<body>
+<div class="app">
+<main>
+<div class="toolbar">
+<label>Zoom <input id="zoom" type="range" min="1" max="12" step="0.25" value="2"><span id="zoomValue">2.00×</span></label>
+<button id="toggleProv" class="active">Provenance overlay</button>
+<button id="toggleResidual">Residual view</button>
+<span class="muted">Click the image to inspect evidence.</span>
+</div>
+<div class="viewport" id="viewport"><div class="stage" id="stage">
+<img id="base" alt="ECZIS reconstruction"><img id="prov" class="overlay" alt="Provenance overlay"><img id="residual" class="overlay hidden" alt="Residual overlay">
+</div></div>
+</main>
+<aside>
+<div class="badge">Synthetic software proof</div>
+<h1>ECZIS v0.1R1</h1>
+<p class="muted">Infinitely sampleable output, finite and explicitly classified evidence. A low residual demonstrates observation consistency, not factual uniqueness.</p>
+<div class="card"><strong>Evidence classes</strong><div class="legend" style="margin-top:12px"><span class="swatch m"></span><span>M — Measured</span><span class="swatch r"></span><span>R — Reconstructed</span><span class="swatch i"></span><span>I — Inferred / non-unique</span><span class="swatch u"></span><span>U — Unsupported</span></div></div>
+<div class="card"><strong>Region inspector</strong><p id="inspect" class="muted">Select a point.</p></div>
+<div class="card"><strong>Run metadata</strong><pre id="metadata" class="value"></pre></div>
+</aside>
+</div>
+<script>
+const P=__ECZIS_PAYLOAD__;
+const base=document.getElementById('base'),prov=document.getElementById('prov'),residual=document.getElementById('residual'),stage=document.getElementById('stage');
+base.src=P.reconstruction;prov.src=P.provenanceOverlay;residual.src=P.residual;base.width=P.width;base.height=P.height;prov.width=P.width;prov.height=P.height;residual.width=P.width;residual.height=P.height;
+const pbytes=Uint8Array.from(atob(P.provenanceBytes),c=>c.charCodeAt(0));const cbytes=Uint8Array.from(atob(P.confidenceBytes),c=>c.charCodeAt(0));
+const names=['U — Unsupported','I — Inferred','R — Reconstructed','M — Measured'];
+const zoom=document.getElementById('zoom'),zv=document.getElementById('zoomValue');function applyZoom(){const z=Number(zoom.value);stage.style.transform=`scale(${z})`;stage.style.marginBottom=`${28+P.height*(z-1)}px`;stage.style.marginRight=`${28+P.width*(z-1)}px`;zv.textContent=z.toFixed(2)+'×';}zoom.oninput=applyZoom;applyZoom();
+document.getElementById('toggleProv').onclick=e=>{prov.classList.toggle('hidden');e.target.classList.toggle('active')};
+document.getElementById('toggleResidual').onclick=e=>{residual.classList.toggle('hidden');e.target.classList.toggle('active')};
+base.onclick=e=>{const r=base.getBoundingClientRect();const x=Math.max(0,Math.min(P.width-1,Math.floor((e.clientX-r.left)/r.width*P.width)));const y=Math.max(0,Math.min(P.height-1,Math.floor((e.clientY-r.top)/r.height*P.height)));const idx=y*P.width+x;document.getElementById('inspect').innerHTML=`Pixel: <b>${x}, ${y}</b><br>Class: <b>${names[pbytes[idx]]}</b><br>Confidence: <b>${(cbytes[idx]/255).toFixed(3)}</b><br><span class="muted">Class cannot be promoted by zoom or rendering.</span>`;};
+document.getElementById('metadata').textContent=JSON.stringify(P.metadata,null,2);
+</script>
+</body>
+</html>

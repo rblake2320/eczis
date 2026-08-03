@@ -1,0 +1,8 @@
+# UNFILED-IP
+"""Dataset split registry for later locked synthetic validation."""
+
+CALIBRATION_SEEDS = (101, 211, 307)
+DEVELOPMENT_SEEDS = (401, 503, 601)
+LOCKED_TEST_SEEDS = (701, 809, 907)
+MISMATCH_SEEDS = (1009, 1103, 1201)
+ADVERSARIAL_SEEDS = (1301, 1409, 1511)

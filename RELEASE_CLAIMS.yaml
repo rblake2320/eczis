@@ -1,0 +1,14 @@
+# UNFILED-IP
+claims:
+  - id: C1
+    text: Independent truth and estimated camera models are used.
+    tests: [test_truth_and_estimated_models_are_distinct]
+  - id: C2
+    text: Detectable injected false detail is demoted by the cycle gate.
+    tests: [test_injected_false_feature_is_demoted]
+  - id: C3
+    text: Sealed bundles detect artifact mutation and wrong keys.
+    tests: [test_bundle_round_trip_and_tamper_detection]
+  - id: C4
+    text: Provenance never promotes under rendering.
+    tests: [test_renderer_never_promotes]
