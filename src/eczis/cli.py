@@ -36,6 +36,12 @@ def _json(value: object) -> None:
     print(json.dumps(value, indent=2, sort_keys=True, default=str))
 
 
+def _models_are_distinct() -> bool:
+    truth_cls: type[object] = TruthCameraModel
+    estimated_cls: type[object] = EstimatedCameraModel
+    return truth_cls is not estimated_cls
+
+
 def _save_gray(path: Path, array: np.ndarray) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     Image.fromarray(np.clip(array * 255.0, 0, 255).astype(np.uint8), mode="L").save(path)
@@ -49,7 +55,7 @@ def doctor(_: argparse.Namespace) -> int:
         "numpy": np.__version__,
         "truth_model": TruthCameraModel.__name__,
         "estimated_model": EstimatedCameraModel.__name__,
-        "models_are_distinct": TruthCameraModel is not EstimatedCameraModel,
+        "models_are_distinct": _models_are_distinct(),
         "claim_language": "Infinitely sampleable output, finite and explicitly classified evidence.",
     }
     _json(checks)

@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-
 _FORBIDDEN = ("infinite resolution", "infinite detail", "hallucination-free", "perfect reconstruction")
 
 

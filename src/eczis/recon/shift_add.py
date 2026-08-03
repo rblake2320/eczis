@@ -11,7 +11,7 @@ from eczis.schemas import CaptureSet, FloatArray
 def bicubic_baseline(capture: CaptureSet) -> FloatArray:
     scale = capture.calibration.scale
     image = zoom(capture.frames[0].data, zoom=scale, order=3, mode="reflect", prefilter=True)
-    return np.clip(image, 0.0, 1.0).astype(np.float32)
+    return np.asarray(np.clip(image, 0.0, 1.0), dtype=np.float32)
 
 
 def shift_add_reconstruct(capture: CaptureSet) -> FloatArray:

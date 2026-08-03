@@ -97,7 +97,9 @@ def run_demo(output: Path, config: DemoConfig | None = None) -> dict[str, Any]:
         saturation_level=cfg.saturation_level,
     )
     estimated_model = EstimatedCameraModel(scale=cfg.scale, psf_sigma_lr=cfg.psf_sigma_lr_estimated)
-    if truth_model.__class__ is estimated_model.__class__:
+    truth_cls: type[object] = truth_model.__class__
+    estimated_cls: type[object] = estimated_model.__class__
+    if truth_cls is estimated_cls:
         raise RuntimeError("Stop condition: truth and estimated models are identical")
     schedule = lattice_schedule(cfg.frame_count, cfg.root_seed)
     capture = SimulatedRig(truth_model, target, calibration).capture_burst(

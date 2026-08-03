@@ -15,7 +15,7 @@ UInt8Array = npt.NDArray[np.uint8]
 
 class ProvenanceClass(IntEnum):
     U = 0
-    I = 1
+    I = 1  # noqa: E741 — canonical M/R/I/U provenance class name (Inferred)
     R = 2
     M = 3
 

@@ -8,7 +8,7 @@ from pathlib import Path
 def main() -> int:
     root = Path(__file__).resolve().parents[1]
     registry = (root / "RELEASE_CLAIMS.yaml").read_text(encoding="utf-8")
-    required = set()
+    required: set[str] = set()
     for block in re.findall(r"tests:\s*\[([^\]]+)\]", registry):
         required.update(item.strip() for item in block.split(",") if item.strip())
     test_text = "\n".join(path.read_text(encoding="utf-8") for path in (root / "tests").rglob("test_*.py"))

@@ -19,4 +19,4 @@ def observability_map(capture: CaptureSet) -> FloatArray:
         support_lr += frame.valid_mask.astype(np.float32)
     support_lr /= float(len(capture.frames))
     support_hr = zoom(support_lr, zoom=scale, order=1, mode="nearest", prefilter=False)
-    return np.clip(support_hr * diversity, 0.0, 1.0).astype(np.float32)
+    return np.asarray(np.clip(support_hr * diversity, 0.0, 1.0), dtype=np.float32)
