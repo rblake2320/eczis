@@ -1,0 +1,15 @@
+# UNFILED-IP
+name: Bootstrap ECZIS v0.2 (paused)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  paused:
+    if: false
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Delta transfer in progress"
