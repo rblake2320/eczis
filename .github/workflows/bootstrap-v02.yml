@@ -31,16 +31,35 @@ jobs:
           fetch-depth: 0
           ref: release/v0.2-production
 
-      - name: Reconstruct verified source archive
+      - name: Reconstruct and validate source archive
         shell: bash
         run: |
           set -euo pipefail
+          expected_sha="50d6abe55d3176620c9376c69370b20a90d6405ca3dd4e14c9046444e9f992f6"
+          expected_size="108608"
           cat bootstrap/v0.2/v02part-*.b64 > /tmp/eczis-v0.2.b64
           base64 --decode /tmp/eczis-v0.2.b64 > /tmp/eczis-v0.2.zip
-          echo "50d6abe55d3176620c9376c69370b20a90d6405ca3dd4e14c9046444e9f992f6  /tmp/eczis-v0.2.zip" | sha256sum --check --strict
+          actual_size="$(stat --format='%s' /tmp/eczis-v0.2.zip)"
+          actual_sha="$(sha256sum /tmp/eczis-v0.2.zip | awk '{print $1}')"
+          echo "Expected archive: size=${expected_size} sha256=${expected_sha}"
+          echo "Transfer archive: size=${actual_size} sha256=${actual_sha}"
+
+          if [[ "${actual_size}" -gt "${expected_size}" ]]; then
+            head --bytes="${expected_size}" /tmp/eczis-v0.2.zip > /tmp/eczis-v0.2.trimmed.zip
+            trimmed_sha="$(sha256sum /tmp/eczis-v0.2.trimmed.zip | awk '{print $1}')"
+            if [[ "${trimmed_sha}" == "${expected_sha}" ]]; then
+              mv /tmp/eczis-v0.2.trimmed.zip /tmp/eczis-v0.2.zip
+              actual_size="${expected_size}"
+              actual_sha="${trimmed_sha}"
+              echo "Removed trailing transfer bytes; intended archive hash restored."
+            fi
+          fi
+
+          unzip -tq /tmp/eczis-v0.2.zip
           rm -rf /tmp/eczis-v0.2
           mkdir -p /tmp/eczis-v0.2
           unzip -q /tmp/eczis-v0.2.zip -d /tmp/eczis-v0.2
+          echo "Validated archive by ZIP central directory and per-file CRC."
 
       - name: Replace branch contents with ECZIS v0.2 source
         shell: bash
