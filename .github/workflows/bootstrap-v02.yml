@@ -1,0 +1,89 @@
+# UNFILED-IP
+name: Bootstrap ECZIS v0.2
+
+on:
+  push:
+    branches:
+      - release/v0.2-production
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: eczis-v02-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  materialize-and-validate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out release branch
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: release/v0.2-production
+
+      - name: Reconstruct verified source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat bootstrap/v0.2/v02part-*.b64 > /tmp/eczis-v0.2.b64
+          base64 --decode /tmp/eczis-v0.2.b64 > /tmp/eczis-v0.2.zip
+          echo "50d6abe55d3176620c9376c69370b20a90d6405ca3dd4e14c9046444e9f992f6  /tmp/eczis-v0.2.zip" | sha256sum --check --strict
+          rm -rf /tmp/eczis-v0.2
+          mkdir -p /tmp/eczis-v0.2
+          unzip -q /tmp/eczis-v0.2.zip -d /tmp/eczis-v0.2
+
+      - name: Replace branch contents with ECZIS v0.2 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rsync -a --delete --exclude='.git/' /tmp/eczis-v0.2/ ./
+          test ! -e bootstrap
+          test ! -e .github/workflows/bootstrap-v02.yml
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8
+        with:
+          version: "0.11.16"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install Python
+        run: uv python install 3.12
+
+      - name: Synchronize environment
+        run: uv sync --all-groups
+
+      - name: IP disclosure gate
+        run: uv run python tools/ip_gate.py
+
+      - name: Private-data gate
+        run: uv run python tools/private_data_gate.py
+
+      - name: Release claims gate
+        run: uv run python tools/claims_check.py
+
+      - name: Ruff
+        run: uv run ruff check .
+
+      - name: Mypy strict
+        run: uv run mypy src tools
+
+      - name: Tests and coverage
+        run: uv run pytest --cov=eczis --cov-report=term-missing --cov-report=xml --cov-fail-under=70
+
+      - name: Commit validated ECZIS v0.2 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add --all
+          git diff --cached --check
+          git commit -m "feat: upgrade ECZIS to v0.2 production research platform"
+          git push origin HEAD:release/v0.2-production
