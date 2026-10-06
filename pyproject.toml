@@ -19,6 +19,9 @@ dev = [
   "ruff>=0.14",
   "types-Pillow>=10",
 ]
+browser = [
+  "playwright>=1.50",
+]
 
 [project.scripts]
 eczis = "eczis.cli:main"
@@ -26,6 +29,7 @@ eczis = "eczis.cli:main"
 [tool.pytest.ini_options]
 addopts = "-q"
 testpaths = ["tests"]
+markers = ["browser: visible-browser viewer tests (set ECZIS_BROWSER_TESTS=1)"]
 pythonpath = ["src"]
 
 [tool.ruff]
