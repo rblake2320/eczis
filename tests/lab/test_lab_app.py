@@ -74,3 +74,22 @@ def test_region_marking_maps_non_square_frames() -> None:
     win.region_marked(QRect(120, 120, 12, 24))  # screen px -> 64-px-wide frame at 384 px
     assert win.roi_hr is not None and win.feature_mask is not None
     assert int(win.feature_mask.sum()) > 0
+
+
+def test_camera_read_failure_is_reported_once_and_recovers() -> None:
+    win = _window("8")
+    real_read = win.source.read
+    calls = {"n": 0}
+
+    def failing() -> object:
+        calls["n"] += 1
+        raise RuntimeError("camera read failed")
+
+    win.source.read = failing  # type: ignore[method-assign]
+    win.tick()
+    win.tick()
+    assert win.log.toPlainText().count("No frames from camera") == 1
+    assert win.timer.interval() == 2000 and "NOT STREAMING" in win.header.text()
+    win.source.read = real_read  # type: ignore[method-assign]
+    win.tick()
+    assert win.timer.interval() == 100 and "Camera streaming." in win.log.toPlainText()

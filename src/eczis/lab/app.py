@@ -234,7 +234,20 @@ class LabWindow(QMainWindow):
         self.header.setText(f"{self.source.describe()}    Connected    Calibration: {prof}")
 
     def tick(self) -> None:
-        frame = self.source.read()
+        try:
+            frame = self.source.read()
+        except RuntimeError as exc:
+            # Do not spin: report once, then retry slowly (camera busy / unplugged / not streaming).
+            if self.timer.interval() == 100:
+                self.say(f"No frames from camera ({exc}). Is another app (Windows Camera, capture "
+                         "tools, video calls) using it? Close it; retrying every 2 s.")
+                self.header.setText(f"{self.source.describe()}    NOT STREAMING    retrying every 2 s")
+                self.timer.setInterval(2000)
+            return
+        if self.timer.interval() != 100:
+            self.timer.setInterval(100)
+            self.update_header()
+            self.say("Camera streaming.")
         self.recent = (self.recent + [frame])[-2:]
         self.view.setPixmap(to_pixmap(frame, VIEW))
         q = quality(self.recent)
