@@ -43,15 +43,24 @@ def rates(s: Scenario, proposal: FloatArray, classes: UInt8Array, planted: BoolA
     err = np.abs(proposal - s.target.image)
     strong = _strong(classes)
     wrong, accurate = err > WRONG, err < ACCURATE
+    n_strong, n_wrong, n_right = int(strong.sum()), int(wrong.sum()), int((~wrong).sum())
     out: dict[str, Any] = {
         "R_fraction": float(strong.mean()),
-        "unsupported_pass": float((strong & wrong).sum() / max(1, int(wrong.sum()))),
+        # P(M/R | wrong): wrong pixels that still received M/R.
+        "unsupported_pass": float((strong & wrong).sum() / max(1, n_wrong)),
+        # P(right | M/R): precision of the M/R label (right = |err| <= WRONG).
+        "precision_R": float((strong & ~wrong).sum() / max(1, n_strong)),
+        # P(M/R | right): recall of the M/R label over right pixels.
+        "recall_R": float((strong & ~wrong).sum() / max(1, n_right)),
         "false_demotion": float((~strong & accurate).sum() / max(1, int(accurate.sum()))),
         "genuine_feature_R": float(strong[s.target.feature_mask].mean()) if s.target.feature_mask.any() else None,
         "wrong_pixels": int(wrong.sum()),
     }
     if planted is not None:
         out["caught"] = float((~strong[planted]).mean())
+    assert proposal.shape == s.target.image.shape == classes.shape
+    assert 0.0 <= out["unsupported_pass"] <= 1.0 and 0.0 <= out["precision_R"] <= 1.0
+    assert int((strong & wrong).sum()) <= n_strong and int((strong & wrong).sum()) <= n_wrong
     return out
 
 
