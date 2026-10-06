@@ -18,6 +18,13 @@ uv run python -m eczis.lab.app --camera 0 --profile my_profile.json
 A real camera is opened only when `--camera` is given. Without a calibration profile the
 analysis refuses with `UNCALIBRATED`.
 
+## Tested devices
+
+- USB endoscope "USB2.0 PC CAMERA" (VID 1908, PID 2311): uncompressed YUYV up to 640x480@30.
+  Opens with the default Media Foundation backend as camera 1 on the owner's PC
+  (`--camera 1 --size 640x480`); DirectShow could not open it by index. Close the Windows
+  Camera app first. Fixed focus: magnification changes with distance (use fixed standoffs).
+
 ## Workflow
 
 1. **Mark Region** (drag around the feature) or **Use demo region**.
