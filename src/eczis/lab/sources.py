@@ -145,6 +145,21 @@ class OpenCVCamera:
         if not self.cap.isOpened():
             raise RuntimeError(f"camera {index} could not be opened")
         self.index = index
+        self.zoom = 1  # fixed optics; magnification changes physically (distance, objective)
+
+    def geometry(self) -> Geometry:
+        """Reconstruction grid at BASE_SCALE x the sensor grid, anchored at the frame corner."""
+        return Geometry(BASE_SCALE, (0.0, 0.0))
+
+    def set_mode(self, width: int, height: int, fourcc: str = "YUY2") -> tuple[int, int, str]:
+        """Request a capture mode (uncompressed YUY2 preferred); returns what the driver granted."""
+        cv2 = self._cv2
+        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*fourcc))
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+        code = int(self.cap.get(cv2.CAP_PROP_FOURCC))
+        got = "".join(chr((code >> 8 * i) & 0xFF) for i in range(4))
+        return int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)), got
 
     def describe(self) -> str:
         w = int(self.cap.get(self._cv2.CAP_PROP_FRAME_WIDTH))

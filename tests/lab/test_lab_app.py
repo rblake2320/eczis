@@ -19,7 +19,7 @@ def _window(glyph: str):  # type: ignore[no-untyped-def]
     from PySide6.QtWidgets import QApplication
 
     QApplication.instance() or QApplication([])
-    return build_window(argparse.Namespace(camera=None, profile=None, glyph=glyph, seed=3))
+    return build_window(argparse.Namespace(camera=None, profile=None, glyph=glyph, seed=3, backend="msmf", size=None, fourcc="YUY2"))
 
 
 @pytest.mark.parametrize("glyph,expected", [("8", "CERTIFIED: feature present"), ("3", "CERTIFIED: feature absent")])
@@ -62,3 +62,15 @@ def test_command_box_validates_and_planned_buttons_are_disabled() -> None:
 def test_main_rejects_bad_arguments() -> None:
     with pytest.raises(SystemExit):
         main(["--glyph", "7"])
+
+
+def test_region_marking_maps_non_square_frames() -> None:
+    """A 640x480-style (non-square) frame maps clicks with one scale anchored top-left."""
+    import numpy as np
+    from PySide6.QtCore import QRect
+
+    win = _window("8")
+    win.recent = [np.zeros((48, 64), np.float32)]  # 4:3 frame
+    win.region_marked(QRect(120, 120, 12, 24))  # screen px -> 64-px-wide frame at 384 px
+    assert win.roi_hr is not None and win.feature_mask is not None
+    assert int(win.feature_mask.sum()) > 0

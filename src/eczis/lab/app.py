@@ -85,6 +85,7 @@ class LiveView(QLabel):
         self.window_ref = window
         self.setFixedSize(VIEW, VIEW)
         self.setStyleSheet("background:#111")
+        self.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)  # click mapping origin
         self.marking = False
         self._start: QPoint | None = None
         self.rect_screen: QRect | None = None
@@ -255,8 +256,8 @@ class LabWindow(QMainWindow):
 
     def region_marked(self, rect: QRect) -> None:
         geo = self.source.geometry()
-        frame_side = self.recent[-1].shape[0]
-        px_per_sensor = VIEW / frame_side
+        h, w = self.recent[-1].shape
+        px_per_sensor = VIEW / max(h, w)  # pixmap keeps aspect ratio, anchored top-left
 
         def to_hr(sx: float, sy: float) -> tuple[float, float]:
             return (geo.origin_hr[0] + sy / px_per_sensor * geo.scale, geo.origin_hr[1] + sx / px_per_sensor * geo.scale)
@@ -360,9 +361,15 @@ def load_profile(path: Path | None) -> CalibrationProfile | None:
 
 def build_window(args: argparse.Namespace) -> LabWindow:
     if args.camera is not None:
+        import cv2
+
         from eczis.lab.sources import OpenCVCamera
 
-        camera = OpenCVCamera(args.camera)
+        backend = {"msmf": cv2.CAP_MSMF, "dshow": cv2.CAP_DSHOW}[args.backend]
+        camera = OpenCVCamera(args.camera, backend)
+        if args.size:
+            w, h = (int(v) for v in args.size.lower().split("x"))
+            camera.set_mode(w, h, args.fourcc)
         return LabWindow(camera, load_profile(args.profile), LoggingController())
     sim = SimulatedMicroscope(glyph_scene(args.glyph == "8"), seed=args.seed)
     profile = load_profile(args.profile) or CalibrationProfile(0.70, 0.004, 700.0, zoom_levels=(1, 2, 4), source="simulated")
@@ -375,6 +382,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--glyph", choices=["8", "3"], default="8")
     ap.add_argument("--seed", type=int, default=3)
     ap.add_argument("--camera", type=int, default=None, help="open a real camera by index (explicit opt-in)")
+    ap.add_argument("--backend", choices=["msmf", "dshow"], default="msmf")
+    ap.add_argument("--size", default=None, help="capture mode, e.g. 640x480")
+    ap.add_argument("--fourcc", default="YUY2", help="pixel format; uncompressed YUY2 preferred over MJPG")
     ap.add_argument("--profile", type=Path, default=None)
     args = ap.parse_args(argv)
     app = QApplication.instance() or QApplication(sys.argv)
