@@ -1,0 +1,98 @@
+# UNFILED-IP
+# Support field + answer certificates — prototype findings (2026-10-06)
+
+EXPERIMENTAL, validation-only (issue #10). Synthetic software reduction-to-practice only; no
+production M/R/I/U behaviour changed. Code: `src/eczis/experimental/`; tests:
+`tests/experimental/test_support_certificates.py`; matrix: `research/certificate_matrix.py`
+(output in gitignored `artifacts/certificates/matrix.json`).
+
+## Evidence block
+
+- baseline: the current production gate labels a 0.35-amplitude near-null detail R (277/277 px, PR #7); the old renderer label path is unchanged here.
+- positive_control: closer and macro captures certify the left stroke correctly for BOTH the "8" (present) and "3" (absent) glyphs, intervals containing the frozen truth (0.75 / 0.2833) — PASS.
+- negative_control: redundant re-capture leaves the stroke question UNDETERMINED for both glyphs; a digitally enlarged frame (derived data, correct correlated noise model) changes the answer s.d. by exactly 0% — PASS.
+- inverted_twin: both directions tested (8 -> present, 3 -> absent) under every acquisition; no class bias observed. Coverage spot check (macro, broad stroke, 60 seeds): z mean +0.17, s.d. 0.93, 60/60 inside +/-3 sigma.
+
+## Method
+
+Small 32x32 patch; the estimated forward operator A (16-frame base burst, scale 4, PSF 0.70) is
+built explicitly and the Gaussian posterior is computed exactly with a weak prior (s.d. 1 on a
+[0, 1] scale). Support is judged per orthonormal-Haar coefficient (location x band) as the
+per-pixel intensity uncertainty it contributes (sigma_k / 2**level): R <= 0.05, I <= 0.15, else U
+(research policy constants). This uses the full posterior covariance, so components that are
+individually visible but confounded with others are not over-credited.
+
+A proposal earns R in a band only if the band is supported AND the proposal agrees with the
+posterior there within 3 sigma; supported bands it contradicts become U. Certificates bound a
+linear question over the 3-sigma posterior ellipsoid (closed form), cross-checked by posterior
+sampling and a null-direction push.
+
+## Results (base burst; median per-pixel uncertainty by band)
+
+| Band (block size) | L1 (2x2) | L2 (4x4) | L3 (8x8) | L4 (16x16) | L5 (32x32) |
+|---|---|---|---|---|---|
+| median uncertainty | 0.496 | 0.23 | 0.072 | 0.025 | 0.008 |
+| class | U | U | I | R | R |
+
+Closer capture (scale 2) makes L3 R; physical macro (scale 1) makes L2 R. Repeating the base
+geometry 4x leaves L1 at >= 90% of its uncertainty, still U.
+
+### Feature x acquisition matrix (answer s.d. reduction vs base; ! = interval excludes truth)
+
+| Feature | base | redundant x2 | closer x2 | physical macro | digital macro (correct) | digital macro (naive) |
+|---|---|---|---|---|---|---|
+| 1-px stroke, present | UND | UND (-1%) | UND (-40%) | PRESENT (-94%) | UND (0%) | UND (-1%) |
+| 1-px stroke, absent | UND | UND (-1%) | UND (-41%) | ABSENT (-95%) | UND (0%) | UND (-1%) |
+| 2-px stroke, present | UND | UND (-2%) | PRESENT (-67%) | PRESENT (-95%) | UND (0%) | UND (-1%) |
+| 2-px stroke, absent | UND | UND (-2%) | ABSENT (-70%) | ABSENT (-97%) | UND (0%) | UND (-1%) |
+| broad stroke, present | PRESENT | PRESENT | PRESENT | PRESENT | PRESENT | PRESENT |
+| broad stroke, absent | UND | UND | ABSENT | ABSENT ! | UND | UND |
+
+- Abstention is correct: no base capture certifies a fine stroke in either direction.
+- Action ranking predicted macro > closer > redundant; observed answer-s.d. reductions match the
+  predictions within 5% and in the same order.
+- The `!` cell (broad, absent, macro) gave the correct decision but its interval missed the truth
+  (z = 3.59 for that noise draw, reproduced exactly). A 60-seed spot check gave 60/60 coverage, so
+  this looks like a tail event, but one 3.6-sigma miss in 36 cells is unusual: **calibration is not
+  claimed** until a large coverage study (>= 1000 draws per cell, plus model mismatch) is run.
+- The naive digital-macro error (treating enlarged pixels as new independent data) moved the
+  answer s.d. by only ~1% in this setup, so this run does not demonstrate faked certainty; the
+  correct treatment is exactly zero information by construction.
+
+### On "redundant gain must be zero"
+
+Not adopted as stated. Re-capturing the same geometry with fresh noise legitimately averages
+noise inside the row space of A (observed 1–3% here). What redundancy cannot do — and the tests
+assert — is reduce uncertainty in unseen bands or certify a near-null question. Exactly zero
+gain is the invariant for derived data (deterministic functions of data already held).
+
+## Renderer compatibility
+
+Per-pixel class maps derived from the support field feed `TiledRasterRenderer`; finer views are
+never stronger, and zoom never promotes. With PR #9's renderer combined (throwaway local merge),
+the weakest-contributor test also passes (12/12).
+
+## Limits
+
+32x32 synthetic patch; matched linear Gaussian model (truth generated by the same operator the
+posterior uses); dense covariance does not scale to full images (tiling or low-rank needed);
+thresholds are policy constants; no model mismatch, registration error, or real optics yet; no
+coverage study. Next experimental step after review: one physical target and a movable camera.
+
+## No-harm selector (truth-free, held-out frames)
+
+`src/eczis/experimental/no_harm.py` rebuilds each candidate without held-out frames and scores
+its prediction of those frames. A deliberately damaged candidate is never selected (test). But on
+the texture scenes (mode C) the selector chose MAP over single-frame bicubic although MAP's error
+against truth is higher:
+
+| Scene | held-out score bicubic / MAP | RMSE vs truth bicubic / MAP | selected |
+|---|---|---|---|
+| microglyph | 2.55 / 1.10 | 0.270 / 0.255 | MAP (correct) |
+| spider | 2.49 / 1.17 | 0.062 / 0.075 | MAP (worse vs truth) |
+| eye | 4.26 / 2.11 | 0.062 / 0.106 | MAP (worse vs truth) |
+
+Held-out-frame prediction measures only what the camera can see; MAP's extra error lies in bands
+the frames do not constrain. A measurement-space no-harm test inherits the same null-space
+blindness. Required change: judge no-harm per band — compare candidates only in supported bands
+and present neither candidate's unsupported-band content as evidence.
