@@ -241,6 +241,7 @@ def run_demo(output: Path, config: DemoConfig | None = None) -> dict[str, Any]:
             "challenge_detection_rate": detection,
             "synthetic_only": True,
         },
+        native_scale=cfg.scale,
     )
 
     ledger_ok, ledger_errors = verify_ledger(ledger)

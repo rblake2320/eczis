@@ -25,7 +25,7 @@ label{font-size:13px}input[type=range]{width:170px}button{background:#152838;col
 <label>Zoom <input id="zoom" type="range" min="1" max="12" step="0.25" value="2"><span id="zoomValue">2.00×</span></label>
 <button id="toggleProv" class="active">Provenance overlay</button>
 <button id="toggleResidual">Residual view</button>
-<span class="muted">Click the image to inspect evidence.</span>
+<span id="displayCap" class="muted"></span>
 </div>
 <div class="viewport" id="viewport"><div class="stage" id="stage">
 <img id="base" alt="ECZIS reconstruction"><img id="prov" class="overlay" alt="Provenance overlay"><img id="residual" class="overlay hidden" alt="Residual overlay">
@@ -36,7 +36,7 @@ label{font-size:13px}input[type=range]{width:170px}button{background:#152838;col
 <h1>ECZIS v0.1R1</h1>
 <p class="muted">Infinitely sampleable output, finite and explicitly classified evidence. A low residual demonstrates observation consistency, not factual uniqueness.</p>
 <div class="card"><strong>Evidence classes</strong><div class="legend" style="margin-top:12px"><span class="swatch m"></span><span>M — Measured</span><span class="swatch r"></span><span>R — Reconstructed</span><span class="swatch i"></span><span>I — Inferred / non-unique</span><span class="swatch u"></span><span>U — Unsupported</span></div></div>
-<div class="card"><strong>Region inspector</strong><p id="inspect" class="muted">Select a point.</p></div>
+<div class="card"><strong>Region inspector</strong><p id="inspect" class="muted">Click the image to inspect evidence.</p><p class="muted">Zoom is CSS enlargement for visualization, not additional measured resolution. The overlay shows the sealed native class; the displayed class at the current zoom is capped by the exported policy.</p></div><div class="card"><strong>Render policy</strong><pre id="policy" class="value"></pre></div>
 <div class="card"><strong>Run metadata</strong><pre id="metadata" class="value"></pre></div>
 </aside>
 </div>
@@ -44,12 +44,32 @@ label{font-size:13px}input[type=range]{width:170px}button{background:#152838;col
 const P=__ECZIS_PAYLOAD__;
 const base=document.getElementById('base'),prov=document.getElementById('prov'),residual=document.getElementById('residual'),stage=document.getElementById('stage');
 base.src=P.reconstruction;prov.src=P.provenanceOverlay;residual.src=P.residual;base.width=P.width;base.height=P.height;prov.width=P.width;prov.height=P.height;residual.width=P.width;residual.height=P.height;
-const pbytes=Uint8Array.from(atob(P.provenanceBytes),c=>c.charCodeAt(0));const cbytes=Uint8Array.from(atob(P.confidenceBytes),c=>c.charCodeAt(0));
-const names=['U — Unsupported','I — Inferred','R — Reconstructed','M — Measured'];
-const zoom=document.getElementById('zoom'),zv=document.getElementById('zoomValue');function applyZoom(){const z=Number(zoom.value);stage.style.transform=`scale(${z})`;stage.style.marginBottom=`${28+P.height*(z-1)}px`;stage.style.marginRight=`${28+P.width*(z-1)}px`;zv.textContent=z.toFixed(2)+'×';}zoom.oninput=applyZoom;applyZoom();
+const pbytes=Uint8Array.from(atob(P.provenanceBytes),c=>c.charCodeAt(0));
+const cvals=new Float32Array(Uint8Array.from(atob(P.confidenceF32),c=>c.charCodeAt(0)).buffer);
+const POL=P.policy;const ORDER=POL.order;
+const names={U:'U — Unsupported',I:'I — Inferred',R:'R — Reconstructed',M:'M — Measured'};
+function scaleCap(m){if(m>POL.demote_to_unsupported_above)return 0;if(m>POL.demote_to_inferred_above)return 1;return ORDER.length-1;}
+function confFactor(m){return m>POL.confidence_decay_start?Math.exp(-(m-POL.confidence_decay_start)):1;}
+function footprint(px,py){const W=P.width,H=P.height;px=Math.min(Math.max(px,0),W-1);py=Math.min(Math.max(py,0),H-1);
+ const x0=Math.floor(px),y0=Math.floor(py),fx=px-x0,fy=py-y0,x1=Math.min(x0+1,W-1),y1=Math.min(y0+1,H-1);
+ const cand=[[y0,x0,(1-fx)*(1-fy)],[y0,x1,fx*(1-fy)],[y1,x0,(1-fx)*fy],[y1,x1,fx*fy]];const m=new Map();
+ for(const [r,c,w] of cand){if(w>0){const k=r*W+c;m.set(k,(m.get(k)||0)+w);}}return [...m.entries()].map(([k,w])=>[Math.floor(k/W),k%W,w]);}
+// Same rule as eczis.field.tiled_raster.TiledRasterRenderer.query_pixel (magnification = display zoom).
+window.eczisQuery=function(px,py,zoom){const fp=footprint(px,py);let nat=3,conf=Infinity;
+ for(const [r,c] of fp){const i=r*P.width+c;nat=Math.min(nat,pbytes[i]);conf=Math.min(conf,cvals[i]);}
+ const cap=scaleCap(zoom);const eff=Math.min(nat,cap);conf=Math.min(Math.max(conf*confFactor(zoom),0),1);
+ const reason=eff<nat?(cap===0?'display scale exceeds the unsupported threshold':'display scale exceeds supported scale'):(fp.length>1?'weakest of '+fp.length+' interpolation contributors':'single contributing pixel');
+ return {native:ORDER[nat],effective:ORDER[eff],confidence:conf,contributors:fp.length,reason:reason};};
+const zoom=document.getElementById('zoom'),zv=document.getElementById('zoomValue');let lastPick=null;
+function showPick(){if(!lastPick)return;const z=Number(zoom.value);const q=window.eczisQuery(lastPick[0],lastPick[1],z);
+ document.getElementById('inspect').innerHTML=`Position: <b>${lastPick[0].toFixed(2)}, ${lastPick[1].toFixed(2)}</b><br>Native class: <b id="nativeClass">${names[q.native]}</b><br>Displayed class at ${z.toFixed(2)}×: <b id="effectiveClass">${names[q.effective]}</b><br>Reason: <span id="reason">${q.reason}</span><br>Confidence at this zoom: <b>${q.confidence.toFixed(3)}</b><br><span class="muted">Zoom can only demote; the sealed native class is never changed.</span>`;}
+function applyZoom(){const z=Number(zoom.value);stage.style.transform=`scale(${z})`;stage.style.marginBottom=`${28+P.height*(z-1)}px`;stage.style.marginRight=`${28+P.width*(z-1)}px`;zv.textContent=z.toFixed(2)+'×';
+ const cap=ORDER[scaleCap(z)];document.getElementById('displayCap').textContent=cap==='M'?`Display cap at ${z.toFixed(2)}×: none (native classes shown)`:`Display cap at ${z.toFixed(2)}×: ${names[cap]} — CSS enlargement, not new measured resolution`;showPick();}
+zoom.oninput=applyZoom;applyZoom();
 document.getElementById('toggleProv').onclick=e=>{prov.classList.toggle('hidden');e.target.classList.toggle('active')};
 document.getElementById('toggleResidual').onclick=e=>{residual.classList.toggle('hidden');e.target.classList.toggle('active')};
-base.onclick=e=>{const r=base.getBoundingClientRect();const x=Math.max(0,Math.min(P.width-1,Math.floor((e.clientX-r.left)/r.width*P.width)));const y=Math.max(0,Math.min(P.height-1,Math.floor((e.clientY-r.top)/r.height*P.height)));const idx=y*P.width+x;document.getElementById('inspect').innerHTML=`Pixel: <b>${x}, ${y}</b><br>Class: <b>${names[pbytes[idx]]}</b><br>Confidence: <b>${(cbytes[idx]/255).toFixed(3)}</b><br><span class="muted">Class cannot be promoted by zoom or rendering.</span>`;};
+base.onclick=e=>{const r=base.getBoundingClientRect();lastPick=[(e.clientX+0.5-r.left)/r.width*P.width-0.5,(e.clientY+0.5-r.top)/r.height*P.height-0.5];showPick();};
+document.getElementById('policy').textContent=JSON.stringify(POL,null,2);
 document.getElementById('metadata').textContent=JSON.stringify(P.metadata,null,2);
 </script>
 </body>
