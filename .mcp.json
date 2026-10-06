@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "eczis-lab": {
+      "command": "uv",
+      "args": ["--directory", "D:/Projects/eczis", "run", "python", "-m", "eczis.lab.mcp_server"]
+    }
+  }
+}

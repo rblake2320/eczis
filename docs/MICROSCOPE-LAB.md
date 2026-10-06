@@ -18,6 +18,16 @@ uv run python -m eczis.lab.app --camera 0 --profile my_profile.json
 A real camera is opened only when `--camera` is given. Without a calibration profile the
 analysis refuses with `UNCALIBRATED`.
 
+## Agent control (MCP)
+
+`uv run python -m eczis.lab.mcp_server` (stdio). Registered for this repo in `.mcp.json` as
+`eczis-lab`. Tools (all prefixed `eczis_lab_`): `list_devices` (no device is opened),
+`open_simulator`, `open_camera` (explicit opt-in), `close`, `status`, `set_profile`,
+`load_profile`, `set_region`, `use_demo_region`, `get_frame` (quality + optional PNG),
+`capture_burst`, `clear_bursts`, `send_command` (validated protocol), `connect_serial`,
+`analyze`, `investigate` (control level gates execution). Errors are returned as
+`{"error": "<what to do next>"}`. Frames returned as images are sent to the calling model.
+
 ## Tested devices
 
 - USB endoscope "USB2.0 PC CAMERA" (VID 1908, PID 2311): uncompressed YUYV up to 640x480@30.
