@@ -224,3 +224,32 @@ def test_frozen_band_support_values(base_field: SupportField) -> None:
     assert med[3] == pytest.approx(0.072, abs=0.01)
     assert med[4] == pytest.approx(0.025, abs=0.005)
     assert med[5] == pytest.approx(0.008, abs=0.003)
+
+
+def test_macro_interval_coverage_is_nominal_and_regression_draw_is_a_tail_event(operators: dict[str, np.ndarray]) -> None:
+    """Coverage qualification for the tight (macro) intervals, plus the frozen z=3.59 draw.
+
+    The posterior covariance is independent of y, so many noise draws are cheap. A calibrated
+    kappa=3 interval has z ~ N(0, 1): misses ~0.27%. The broad/absent/macro matrix draw (seed 105)
+    gave z = 3.59 — a tail event consistent with that rate, not systematic undercoverage.
+    """
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "research"))
+    from certificate_matrix import scene
+
+    truth, q = scene("stroke_broad", False)
+    a = np.vstack([operators["base"], operators["macro"]])
+    y_clean = a @ truth.ravel()
+    var = noise_variance(y_clean, SHOT, READ)
+    d = 1.0 / var
+    cov = np.linalg.inv((a.T * d) @ a + np.eye(a.shape[1]))
+    cg = cov @ q.weights
+    se = float(np.sqrt(q.weights @ cg))
+    theta = float(q.weights @ truth.ravel())
+    ys = y_clean + np.random.default_rng(2026).standard_normal((1500, y_clean.size)) * np.sqrt(var)
+    est = (ys * d) @ (a @ cg) + ys.mean(axis=1) * cg.sum()
+    z = (est - theta) / se
+    assert abs(z.mean()) < 0.1 and 0.93 < z.std() < 1.07
+    assert np.mean(np.abs(z) <= 3.0) >= 0.993  # nominal 0.9973; binomial slack at n=1500
