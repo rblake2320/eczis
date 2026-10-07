@@ -80,3 +80,19 @@ def test_stdio_round_trip_agent_certifies_glyph() -> None:
     assert steps[0]["status"] == "UNDETERMINED" and steps[0]["executed"] == ["ZOOM 4", "CAPTURE 16"]
     assert steps[-1]["status"] == "CERTIFIED: feature present"
     assert got["status"]["zoom"] == 4
+
+
+def test_capture_record_logs_every_action_without_pixels(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    s = LabSession(record_dir=tmp_path)
+    s.open_simulator("8", seed=3)
+    s.use_demo_region()
+    s.capture_burst(4)
+    s.send_command("LIGHT RING 50")
+    s.analyze()
+    lines = [json.loads(x) for x in s.record_path.read_text(encoding="utf-8").splitlines()]  # type: ignore[union-attr]
+    actions = [x["action"] for x in lines]
+    assert actions[:2] == ["close", "open_simulator"] and {"set_region", "capture_burst", "send_command", "analyze"} <= set(actions)
+    burst = next(x for x in lines if x["action"] == "capture_burst")
+    assert len(burst["frame_hashes"]) == 4 and all(len(h) == 16 for h in burst["frame_hashes"])
+    assert all(x["session"] == s.session_id for x in lines)
+    assert "data" not in json.dumps(lines)  # no pixel payloads in the record

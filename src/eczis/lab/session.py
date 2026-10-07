@@ -69,8 +69,24 @@ def analysis_dict(result: Analysis) -> dict[str, Any]:
     }
 
 
+def _frame_hashes(frames: list[np.ndarray]) -> list[str]:
+    import hashlib
+
+    return [hashlib.sha256(np.ascontiguousarray(f).tobytes()).hexdigest()[:16] for f in frames]
+
+
 class LabSession:
-    def __init__(self) -> None:
+    """Control surface. If record_dir is set, every action is appended to <record_dir>/<id>.jsonl."""
+
+    def __init__(self, record_dir: str | Path | None = None) -> None:
+        import time
+        import uuid
+
+        self.record_dir = Path(record_dir) if record_dir else None
+        self.session_id = time.strftime("%Y%m%dT%H%M%S") + "-" + uuid.uuid4().hex[:6]
+        self._reset()
+
+    def _reset(self) -> None:
         self.source: Any = None
         self.controller: Controller = LoggingController()
         self.profile: CalibrationProfile | None = None
@@ -79,6 +95,24 @@ class LabSession:
         self.bursts: list[Burst] = []
         self.recent: list[np.ndarray] = []
         self.last: dict[str, Any] | None = None
+
+    @property
+    def record_path(self) -> Path | None:
+        return None if self.record_dir is None else self.record_dir / f"{self.session_id}.jsonl"
+
+    def record(self, action: str, args: dict[str, Any], result: dict[str, Any], **extra: Any) -> None:
+        """Append one capture-record line (no-op without record_dir). Never stores pixel data."""
+        if self.record_path is None:
+            return
+        import time
+
+        self.record_path.parent.mkdir(parents=True, exist_ok=True)
+        line = {"t": time.time(), "session": self.session_id, "action": action, "args": args,
+                "device": None if self.source is None else self.source.describe(),
+                "calibration": None if self.profile is None else self.profile.source,
+                "region": None if self.roi_hr is None else list(self.roi_hr), "result": result, **extra}
+        with self.record_path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(line, default=str) + "\n")
 
     # --- sources -------------------------------------------------------------
     def _require_source(self) -> Any:
@@ -89,7 +123,8 @@ class LabSession:
     def close(self) -> dict[str, Any]:
         if self.source is not None and hasattr(self.source, "close"):
             self.source.close()
-        self.__init__()  # type: ignore[misc]
+        self._reset()
+        self.record("close", {}, {"closed": True})
         return {"closed": True}
 
     def open_simulator(self, glyph: str = "8", seed: int = 3) -> dict[str, Any]:
@@ -99,7 +134,9 @@ class LabSession:
         sim = SimulatedMicroscope(glyph_scene(glyph == "8"), seed=seed)
         self.source, self.controller = sim, sim
         self.profile = CalibrationProfile(0.70, 0.004, 700.0, zoom_levels=(1, 2, 4), source="simulated")
-        return self.status()
+        out = self.status()
+        self.record("open_simulator", {"glyph": glyph, "seed": seed}, out)
+        return out
 
     def open_camera(self, index: int, width: int | None = None, height: int | None = None,
                     fourcc: str = "YUY2", backend: str = "msmf") -> dict[str, Any]:
@@ -127,6 +164,8 @@ class LabSession:
         self.profile = None
         out = self.status()
         out["granted_mode"] = granted
+        self.record("open_camera", {"index": index, "width": width, "height": height, "fourcc": fourcc,
+                                    "backend": backend}, out)
         return out
 
     def connect_serial(self, port: str, baudrate: int = 115200) -> dict[str, Any]:
@@ -157,7 +196,9 @@ class LabSession:
             raise LabError("psf_sigma_lr, read_noise and shot_electrons must be positive")
         self.profile = CalibrationProfile(psf_sigma_lr, read_noise, shot_electrons, quantization_step,
                                           tuple(zoom_levels or [1]), source)
-        return {"calibration": asdict(self.profile)}
+        out = {"calibration": asdict(self.profile)}
+        self.record("set_profile", out["calibration"], out)
+        return out
 
     def load_profile(self, path: str) -> dict[str, Any]:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -171,7 +212,9 @@ class LabSession:
         mask = np.zeros((ROI, ROI), bool)
         mask[mask_y0:mask_y1, mask_x0:mask_x1] = True
         self.roi_hr, self.mask = (int(roi_y), int(roi_x)), mask
-        return self.status()
+        out = self.status()
+        self.record("set_region", {"roi": [roi_y, roi_x], "mask": [mask_y0, mask_y1, mask_x0, mask_x1]}, out["region"])
+        return out
 
     def use_demo_region(self) -> dict[str, Any]:
         return self.set_region(48, 48, 11, 23, 10, 12)
@@ -188,7 +231,9 @@ class LabSession:
 
         buf = io.BytesIO()
         PILImage.fromarray((np.clip(frame, 0, 1) * 255).astype(np.uint8), "L").save(buf, "PNG")
-        return frame_quality(self.recent), buf.getvalue()
+        quality = frame_quality(self.recent)
+        self.record("get_frame", {}, quality, frame_hash=_frame_hashes([frame])[0])
+        return quality, buf.getvalue()
 
     def capture_burst(self, count: int = 16) -> dict[str, Any]:
         if not 2 <= count <= 256:
@@ -199,8 +244,10 @@ class LabSession:
         except RuntimeError as exc:
             raise LabError(STREAM_FAILED_HINT) from exc
         self.bursts.append(Burst(list(frames), int(getattr(src, "zoom", 1)), src.geometry()))
-        return {"captured": count, "zoom": self.bursts[-1].zoom, "bursts_held": len(self.bursts),
-                "quality": frame_quality(list(frames[-2:]))}
+        out = {"captured": count, "zoom": self.bursts[-1].zoom, "bursts_held": len(self.bursts),
+               "quality": frame_quality(list(frames[-2:]))}
+        self.record("capture_burst", {"count": count}, out, frame_hashes=_frame_hashes(list(frames)))
+        return out
 
     def clear_bursts(self) -> dict[str, Any]:
         self.bursts = []
@@ -218,7 +265,9 @@ class LabSession:
         if cmd.verb == "CAPTURE" and getattr(self.source, "last_burst", None):
             self.bursts.append(Burst(list(self.source.last_burst), int(getattr(self.source, "zoom", 1)),
                                      self.source.geometry()))
-        return {"sent": cmd.encode(), "reply": reply}
+        out = {"sent": cmd.encode(), "reply": reply}
+        self.record("send_command", {"line": line}, out)
+        return out
 
     # --- analysis ------------------------------------------------------------
     def _require_region(self) -> tuple[tuple[int, int], np.ndarray]:
@@ -236,6 +285,7 @@ class LabSession:
         except ValueError as exc:
             raise LabError(f"{exc}. Re-mark the region inside the current field of view.") from exc
         self.last = analysis_dict(result)
+        self.record("analyze", {"bursts": [b.zoom for b in self.bursts]}, self.last)
         return self.last
 
     def investigate(self, level: str = "MANUAL", max_steps: int = 4) -> dict[str, Any]:
@@ -251,6 +301,7 @@ class LabSession:
         out: dict[str, Any] = {"level": lvl.name, "steps": [{"zoom": s.zoom, "executed": list(s.executed), **analysis_dict(s.analysis)}
                                             for s in steps]}
         self.last = out["steps"][-1]
+        self.record("investigate", {"level": lvl.name, "max_steps": max_steps}, out)
         return out
 
 

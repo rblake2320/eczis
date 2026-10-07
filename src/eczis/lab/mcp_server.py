@@ -11,6 +11,7 @@ EXPERIMENTAL: synthetic reduction-to-practice until validated on calibrated phys
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
 from mcp.server.mcpserver import Image, MCPServer
@@ -27,7 +28,7 @@ Results are CERTIFIED (present/absent), UNDETERMINED (with ranked next captures)
 Never present an UNDETERMINED result as an answer; digital zoom adds no measurement."""
 
 server: MCPServer[Any] = MCPServer(name="eczis_lab", instructions=INSTRUCTIONS)
-session = LabSession()
+session = LabSession(record_dir=os.environ.get("ECZIS_LAB_RECORD_DIR", "artifacts/records"))
 
 READ = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
 ACT = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False)
@@ -75,6 +76,16 @@ def eczis_lab_close() -> dict[str, Any]:
 def eczis_lab_status() -> dict[str, Any]:
     """Current source, zoom, controller, calibration, marked region, held bursts and last result."""
     return session.status()
+
+
+@server.tool(annotations=READ)
+def eczis_lab_get_record(last: int = 20) -> dict[str, Any]:
+    """Capture record for this session: path and the last N JSON lines (actions, args, frame hashes, results)."""
+    path = session.record_path
+    if path is None or not path.exists():
+        return {"path": None if path is None else str(path), "entries": []}
+    lines = path.read_text(encoding="utf-8").splitlines()
+    return {"path": str(path), "total": len(lines), "entries": [json.loads(x) for x in lines[-max(1, last):]]}
 
 
 @server.tool(annotations=ACT)
