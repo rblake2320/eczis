@@ -160,6 +160,7 @@ class ScanResult:
     tracked_frames: int
     notes: list[str] = field(default_factory=list)
     init_gap: int = 6
+    registered: list[int] = field(default_factory=list)  # frame indices that were placed
 
 
 def _proj(k: F64, r_cw: F64, t_cw: F64) -> F64:
@@ -301,7 +302,41 @@ def reconstruct(frames: list[F64], k: Intrinsics, baseline_mm: float, init_gap: 
             "I" if (angle >= min_angle_deg / 2 and rms <= 2.0) else "U")
         points.append(Point3D(x, len(dirs), angle, rms, support))
     return ScanResult(points, [centres[f] for f in sorted(rcw)], [rcw[f].T for f in sorted(rcw)], len(rcw),
-                      init_gap=init_gap)
+                      init_gap=init_gap, registered=sorted(rcw))
+
+
+@dataclass
+class Segment:
+    start: int
+    end: int  # inclusive, absolute frame index
+    result: ScanResult
+
+
+def reconstruct_segments(frames: list[F64], k: Intrinsics, baseline_mm: float = 1.0,
+                         min_frames: int = 12) -> list[Segment]:
+    """Split a handheld sweep at tracking losses (glare, blur, jerks) and reconstruct each piece.
+
+    A single glare spike used to end the whole reconstruction; now tracking restarts after the
+    loss. Each segment has its own coordinate frame (they are not merged).
+    """
+    segments: list[Segment] = []
+    start = 0
+    while len(frames) - start >= min_frames:
+        try:
+            res = reconstruct(frames[start:], k, baseline_mm, init_gap=None)
+        except Exception:  # noqa: BLE001 - too little motion or an OpenCV failure here: skip ahead
+            start += min_frames // 2
+            continue
+        reg = res.registered
+        run_end = 0  # end of the contiguous run of placed frames from the start of this piece
+        for idx in reg:
+            if idx - run_end <= 3:  # tolerate a couple of dropped frames
+                run_end = idx
+            else:
+                break
+        segments.append(Segment(start, start + run_end, res))
+        start = start + run_end + 1
+    return segments
 
 
 # --------------------------------------------------------------------------- coverage & guidance

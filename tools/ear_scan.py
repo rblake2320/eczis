@@ -40,8 +40,25 @@ def analyse(frames: list[np.ndarray], out: Path, simulated: object = None) -> di
                  "NO SCALE: distances in arbitrary units until a known insertion distance is supplied",
                  "measurement record only, not a diagnosis"]
     t0 = time.perf_counter()
-    res = reconstruct(frames, k, base, init_gap=6 if simulated is not None else None)
+    segments_info: list[dict[str, object]] = []
+    if simulated is not None:
+        res = reconstruct(frames, k, base, init_gap=6)
+    else:
+        from eczis.lab.scan3d import reconstruct_segments
+
+        segs = reconstruct_segments(frames, k, base)
+        if not segs:
+            res = reconstruct(frames, k, base, init_gap=None)  # raises NotEnoughMotion with advice
+        else:
+            for s in segs:
+                segments_info.append({"frames": f"{s.start}-{s.end}", "placed": s.end - s.start + 1,
+                                      "R": sum(p.support == "R" for p in s.result.points)})
+            res = max(segs, key=lambda s: sum(p.support == "R" for p in s.result.points)).result
     summary = summarize(res)
+    if segments_info:
+        summary["segments"] = segments_info
+        summary["notes"] = list(summary["notes"]) + [
+            "sweep split at tracking losses; the 3D file holds the segment with the most R points"]
     summary["notes"] = list(summary["notes"]) + notes
     summary["seconds"] = round(time.perf_counter() - t0, 2)
     summary["frames_recorded"] = len(frames)
