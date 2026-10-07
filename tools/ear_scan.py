@@ -58,7 +58,7 @@ def quality(frame: np.ndarray) -> tuple[str, str]:
     return ("GOOD" if clipped < 0.05 else f"CLIPPING {clipped:.0%}"), ("GOOD" if focus > 2e-4 else "SOFT")
 
 
-def run_camera(index: int, seconds: float, stride: int) -> int:
+def run_camera(index: int, seconds: float, stride: int, auto: float | None = None) -> int:
     import cv2
 
     from eczis.lab.sources import OpenCVCamera
@@ -70,8 +70,9 @@ def run_camera(index: int, seconds: float, stride: int) -> int:
     except RuntimeError as exc:
         print(f"Camera {index} not streaming ({exc}). Close the Lab window / Windows Camera app and retry.")
         return 2
-    print("Preview open. SPACE = record sweep, Q/Esc = quit.")
+    print("Preview open. SPACE = record sweep, Q/Esc = quit.", flush=True)
     win = "ECZIS ear scan (SPACE record, Q quit)"
+    t_open = time.monotonic()
     try:
         while True:
             try:
@@ -84,16 +85,32 @@ def run_camera(index: int, seconds: float, stride: int) -> int:
             exp, foc = quality(grey)
             cv2.putText(show, f"Exposure {exp}  Focus {foc}  |  SPACE record  Q quit", (10, 24),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
+            remaining = None if auto is None else auto - (time.monotonic() - t_open)
+            if remaining is not None and remaining > 0:
+                cv2.putText(show, f"RECORDING IN {remaining:0.0f}", (150, 260), cv2.FONT_HERSHEY_SIMPLEX, 1.6, (0, 0, 255), 4)
             cv2.imshow(win, show)
+            cv2.setWindowProperty(win, cv2.WND_PROP_TOPMOST, 1)
             key = cv2.waitKey(15) & 0xFF
             if key in (ord("q"), 27):
                 return 0
-            if key == ord(" "):
+            if key == ord(" ") or (remaining is not None and remaining <= 0):
                 n = int(seconds * 30)
-                print(f"Recording {seconds:.0f} s: move slowly in and out with a slight twist...")
-                frames = cam.capture(n)[::stride]
+                print(f"Recording {seconds:.0f} s: move slowly in and out with a slight twist...", flush=True)
+                rec = show.copy()
+                cv2.putText(rec, "RECORDING - move slowly", (90, 260), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
+                cv2.imshow(win, rec)
+                cv2.waitKey(1)
                 out = OUT_ROOT / time.strftime("%Y%m%d-%H%M%S")
                 out.mkdir(parents=True, exist_ok=True)
+                frames, snaps = [], 0
+                for i in range(n):  # grey frames for 3D, full-colour stills ~every 0.5 s for close inspection
+                    frames.extend(cam.capture(1))
+                    if i % 15 == 0:
+                        colour_now = cam.read_display()
+                        if colour_now is not None:
+                            cv2.imwrite(str(out / f"snapshot_{snaps:02d}.png"), cv2.cvtColor(colour_now, cv2.COLOR_RGB2BGR))
+                            snaps += 1
+                frames = frames[::stride]
                 np.savez_compressed(out / "frames.npz", frames=np.stack(frames).astype(np.float32))
                 print(f"Recorded {len(frames)} frames -> reconstructing...")
                 try:
@@ -101,8 +118,10 @@ def run_camera(index: int, seconds: float, stride: int) -> int:
                 except Exception as exc:  # noqa: BLE001 - report OpenCV failures plainly
                     print(f"Reconstruction failed: {exc}. Try a slower sweep with the canal wall in view.")
                     continue
-                print(json.dumps(summary, indent=2))
-                print(f"Saved to {out} (scan.ply opens in Blender/MeshLab). SPACE to scan again, Q to quit.")
+                print(json.dumps(summary, indent=2), flush=True)
+                print(f"Saved to {out}: scan.ply (Blender/MeshLab) + {snaps} colour snapshots.", flush=True)
+                if auto is not None:
+                    return 0
     finally:
         cv2.destroyAllWindows()
         cam.close()
@@ -114,6 +133,7 @@ def main() -> int:
     ap.add_argument("--seconds", type=float, default=6.0)
     ap.add_argument("--stride", type=int, default=2, help="keep every Nth frame")
     ap.add_argument("--simulate", action="store_true", help="dry run on the synthetic canal")
+    ap.add_argument("--auto", type=float, default=None, help="start recording automatically after N seconds")
     args = ap.parse_args()
     if args.simulate:
         from eczis.lab.scan3d import simulate_sweep
@@ -124,7 +144,7 @@ def main() -> int:
         print(json.dumps(analyse(sim.frames, out, sim), indent=2))
         print(f"Saved to {out}")
         return 0
-    return run_camera(args.camera, args.seconds, args.stride)
+    return run_camera(args.camera, args.seconds, args.stride, args.auto)
 
 
 if __name__ == "__main__":
