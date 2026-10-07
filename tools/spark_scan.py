@@ -33,16 +33,50 @@ def ssh(host: str, remote_cmd: str, timeout: int = 1800) -> subprocess.Completed
     return sh(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", host, remote_cmd], timeout)
 
 
-def run(folder: Path, host: str, lens: Path | None, stride: int) -> dict[str, object]:
+def remote_environment(host: str) -> dict[str, str]:
+    """Hashes that bind a result to the reconstructor: checkpoint sha256s, MASt3R-SLAM commit, torch version."""
+    r = ssh(host, f"cd {SLAM_DIR} && git rev-parse HEAD 2>/dev/null; sha256sum checkpoints/*.pth 2>/dev/null; "
+                  f". {REMOTE_ROOT}/.venv/bin/activate && python -c 'import torch;print(\"torch\", torch.__version__)'", 120)
+    env: dict[str, str] = {}
+    for line in (r.stdout or "").splitlines():
+        parts = line.split()
+        if len(parts) == 1 and len(parts[0]) == 40:
+            env["mast3r_slam_commit"] = parts[0]
+        elif len(parts) == 2 and parts[0] == "torch":
+            env["torch"] = parts[1]
+        elif len(parts) == 2 and len(parts[0]) == 64:
+            env[f"sha256:{Path(parts[1]).name}"] = parts[0]
+    if not env:
+        env["error"] = (r.stderr or "no output").strip()[:200]
+    return env
+
+
+def run(folder: Path, host: str, lens: Path | None, stride: int, lens_perturb: float = 0.0) -> dict[str, object]:
+    """lens_perturb != 0 is the wrong-calibration control: the given lens is deliberately mis-specified
+    (fx, fy scaled by 1+p, cx shifted by p*width/2) and the output goes to mast3r_perturbed/ so the valid
+    result is preserved; the statuses say PERTURBED_CONTROL."""
     t0 = time.perf_counter()
     frames_file = folder / "frames.npz"
     if not frames_file.exists():
         raise SystemExit(f"no frames.npz in {folder}")
-    name = folder.name.replace("-", "")
-    out = folder / "mast3r"
+    if lens_perturb and lens is None:
+        raise SystemExit("--lens-perturb needs --lens: the control mis-specifies a real calibration")
+    name = folder.name.replace("-", "") + ("p" if lens_perturb else "")
+    out = folder / ("mast3r_perturbed" if lens_perturb else "mast3r")
     out.mkdir(exist_ok=True)
     frames = np.load(frames_file)["frames"][::stride]
     h, w = frames.shape[1:3]
+    # 0. image-quality gate: a glare/dark sweep is refused here, before any reconstruction exists
+    from eczis.lab.scan3d import SweepRefused, require_usable
+
+    try:
+        quality_record = require_usable([np.asarray(f, np.float64) for f in frames])
+    except SweepRefused as exc:
+        refused = {"status": str(exc), "frames": int(len(frames)),
+                   "statuses": {"geometry_support": "NONE (sweep refused)", "lens_calibration": "UNCALIBRATED" if lens is None else "CALIBRATED",
+                                "metric_scale": "NO_SCALE"}, "measurement_record_not_diagnosis": True}
+        (out / "result.json").write_text(json.dumps(refused, indent=2), encoding="utf-8")
+        raise SystemExit(str(exc)) from exc
     # 1. push frames as PNGs (one archive)
     from PIL import Image
 
@@ -65,6 +99,8 @@ def run(folder: Path, host: str, lens: Path | None, stride: int) -> dict[str, ob
         from eczis.lab.calibrate import LensProfile
 
         lp = LensProfile.from_json(lens)
+        if lens_perturb:
+            lp = lp.perturbed(lens_perturb)
         intr = f"{SLAM_DIR}/config/intr_{name}.yaml"
         yaml = f"width: {lp.width}\nheight: {lp.height}\ncalibration: [{lp.fx}, {lp.fy}, {lp.cx}, {lp.cy}]\n"
         ssh(host, f"cat > {intr} <<'EOF'\n{yaml}EOF")
@@ -88,16 +124,20 @@ def run(folder: Path, host: str, lens: Path | None, stride: int) -> dict[str, ob
     from eczis.lab.grade_dense import grade_mast3r_output
 
     if lens is not None:
-        k = LensProfile.from_json(lens).matrix()
-        lens_note = f"calibrated lens {lens.name}"
+        lp_grade = LensProfile.from_json(lens)
+        if lens_perturb:
+            lp_grade = lp_grade.perturbed(lens_perturb)
+        k = lp_grade.matrix()
+        lens_note = f"calibrated lens {lens.name}" + (f" PERTURBED {lens_perturb:+.0%} (wrong-calibration control)" if lens_perturb else "")
     else:
         k = np.array([[0.8 * w, 0, w / 2], [0, 0.8 * w, h / 2], [0, 0, 1.0]])
         lens_note = "UNCALIBRATED lens (0.8 x width guess); NO SCALE"
     g = grade_mast3r_output(out / f"{name}.ply", out / f"{name}.txt", k, (w, h), out / "graded.ply")
     statuses = {"geometry_support": "per-point R/I/U in graded.ply",
-                "lens_calibration": "CALIBRATED" if lens is not None else "UNCALIBRATED",
+                "lens_calibration": (f"PERTURBED_CONTROL({lens_perturb:+.0%})" if lens_perturb else "CALIBRATED") if lens is not None else "UNCALIBRATED",
                 "metric_scale": "NO_SCALE"}  # a lens alone does not give scale; needs a known length
     result = {**g, "lens": lens_note, "statuses": statuses, "frames_sent": int(len(frames)), "host": host,
+              "sweep_quality": quality_record, "environment": remote_environment(host),
               "seconds": {"push": round(t_push, 1), "slam": round(t_slam, 1), "total": round(time.perf_counter() - t0, 1)},
               "slam_log_tail": log_tail, "measurement_record_not_diagnosis": True}
     (out / "result.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
@@ -110,8 +150,10 @@ def main() -> int:
     ap.add_argument("--host", default="spark1")
     ap.add_argument("--lens", type=Path, default=None, help="LensProfile JSON from the calibrator")
     ap.add_argument("--stride", type=int, default=1)
+    ap.add_argument("--lens-perturb", type=float, default=0.0,
+                    help="wrong-calibration control: mis-specify --lens by this fraction (e.g. 0.10); output to mast3r_perturbed/")
     a = ap.parse_args()
-    res = run(a.folder, a.host, a.lens, a.stride)
+    res = run(a.folder, a.host, a.lens, a.stride, a.lens_perturb)
     print(json.dumps({k: res[k] for k in ("points", "keyframes", "counts", "fractions", "lens", "seconds")}, indent=2))
     print("graded cloud:", res["graded_ply"])
     return 0

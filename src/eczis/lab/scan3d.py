@@ -171,7 +171,39 @@ class NotEnoughMotion(ValueError):
     """The camera did not move enough between frames to measure depth (no parallax)."""
 
 
+class SweepRefused(ValueError):
+    """The recorded frames are not usable (glare / darkness); no geometry is produced from them."""
+
+
 MIN_PARALLAX_PX = 25.0  # synthetic canal: 8 px pairs gave R error 0.40 mm, 25 px 0.24 mm
+MAX_GLARE_FRAC = 0.05  # median per-frame fraction of clipped-bright pixels above this -> refuse the sweep
+MAX_DARK_FRAC = 0.50  # median fraction of near-black pixels above this -> refuse the sweep
+
+
+def sweep_quality(frames: list[F64]) -> dict[str, Any]:
+    """Per-sweep image quality: clipped-bright and near-black fractions (median over frames) and the verdict.
+
+    Pre-registered thresholds (MAX_GLARE_FRAC, MAX_DARK_FRAC) are the same numbers the live guidance
+    uses; a sweep over them is refused explicitly instead of being reconstructed into trusted-looking
+    geometry. This is the high-glare failure control of the phantom protocol.
+    """
+    glare = np.array([float(np.mean(np.asarray(f) >= 0.98)) for f in frames])
+    dark = np.array([float(np.mean(np.asarray(f) <= 0.03)) for f in frames])
+    g, d = float(np.median(glare)), float(np.median(dark))
+    refused = g > MAX_GLARE_FRAC or d > MAX_DARK_FRAC
+    reason = "GLARE" if g > MAX_GLARE_FRAC else ("TOO DARK" if d > MAX_DARK_FRAC else "")
+    return {"glare_frac_median": round(g, 4), "glare_frac_p90": round(float(np.percentile(glare, 90)), 4),
+            "dark_frac_median": round(d, 4), "frames": len(frames), "refused": refused, "reason": reason,
+            "thresholds": {"max_glare_frac": MAX_GLARE_FRAC, "max_dark_frac": MAX_DARK_FRAC}}
+
+
+def require_usable(frames: list[F64]) -> dict[str, Any]:
+    """Return the quality record or raise SweepRefused with the reason (used by every reconstruction entry)."""
+    q = sweep_quality(frames)
+    if q["refused"]:
+        raise SweepRefused(f"REFUSED: {q['reason']} (clipped-bright median {q['glare_frac_median']:.1%}, "
+                           f"near-black median {q['dark_frac_median']:.1%}); adjust the LED and record again")
+    return q
 
 
 def reconstruct(frames: list[F64], k: Intrinsics, baseline_mm: float, init_gap: int | None = 6,

@@ -45,7 +45,19 @@ def main() -> int:
     except RuntimeError as exc:
         print(f"Camera {a.camera} not streaming ({exc}). Close other camera apps and retry.")
         return 2
-    cal = Calibrator(cols=a.cols, rows=a.rows, square_mm=a.square)
+    square, print_note = a.square, "no print record (artifacts/calib/print_record.json missing): nominal square size used"
+    rec_path = OUT / "print_record.json"
+    if rec_path.exists():
+        import json
+
+        rec = json.loads(rec_path.read_text(encoding="utf-8"))
+        if rec.get("status") != "OK":
+            print(f"print record status {rec.get('status')!r}: fix the print before calibrating")
+            return 4
+        square = a.square * float(rec["print_scale"])
+        print_note = f"print_record.json {rec['date']}: bar {rec['bar_measured_h_mm']}x{rec['bar_measured_v_mm']} mm, square {square:.4f} mm"
+    print(print_note)
+    cal = Calibrator(cols=a.cols, rows=a.rows, square_mm=square)
     win = "ECZIS lens calibration (S solve, Q quit)"
     last_try = 0.0
     try:
@@ -78,12 +90,17 @@ def main() -> int:
                 if len(cal.detections) < MIN_VIEWS:
                     print(f"only {len(cal.detections)} views; need {MIN_VIEWS}")
                     continue
-                prof = cal.solve(camera=f"camera {a.camera} ({cam.describe()})", capture_mode="640x480 YUY2 MSMF")
+                print("solving (with held-out check)...", flush=True)
+                prof = cal.solve(camera=f"camera {a.camera} ({cam.describe()})", capture_mode="640x480 YUY2 MSMF", print_record=print_note)
                 OUT.mkdir(parents=True, exist_ok=True)
                 path = prof.to_json(OUT / f"lens_camera{a.camera}.json")
                 s = summary(prof)
                 print("lens profile:", s)
                 print("saved", path, "| ok" if prof.ok() else "| WARNING: rms too high or too few views; recapture")
+                if prof.held_out_stable() is False:
+                    print("WARNING: held-out reprojection unstable (a view the solver never saw reprojects badly); recapture")
+                if prof.diverse() is False:
+                    print("WARNING: views not diverse enough (tilt / position / size); the lens is weakly constrained")
                 return 0 if prof.ok() else 3
     finally:
         cv2.destroyAllWindows()

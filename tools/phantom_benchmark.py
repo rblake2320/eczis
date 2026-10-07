@@ -200,7 +200,21 @@ def benchmark(ply: Path, diameter_mm: float, trajectory: Path | None, scale_mm: 
     out["classes"] = classes
     meds = [classes[k]["median_abs_err_mm"] for k in ("R", "I", "U") if k in classes]
     out["ordering_R<I<U"] = bool(len(meds) == 3 and meds[0] < meds[1] < meds[2])
+    for q in ("p90_abs_err_mm", "p95_abs_err_mm"):
+        v = [classes[k][q] for k in ("R", "I", "U") if k in classes]
+        out[f"ordering_R<I<U_{q.split('_')[0]}"] = bool(len(v) == 3 and v[0] < v[1] < v[2])
+    if profile and prof_z is not None and prof_r is not None and len(prof_z):
+        # diameter error by axial slice (R wall vs the known diameter) and global-vs-profile disagreement
+        out["diameter_error_by_slice"] = [{"z_mm": round(float(z), 2), "R_diameter_mm": round(float(2 * r), 3),
+                                           "error_mm": round(float(2 * r - diameter_mm), 3)} for z, r in zip(prof_z, prof_r, strict=True)]
+        out["profile_vs_global_disagreement_mm"] = round(float(np.median(np.abs(2 * prof_r - 2 * r_fit * scale))), 3)
+        out["slice_error_p90_mm"] = round(float(np.percentile(np.abs(2 * prof_r - diameter_mm), 90)), 3)
+    from eczis.lab.policy_freeze import check
+
+    out["blind_analysis"] = check()
     out["notes"] = ["physical error = |radius - known radius| per point; ordering is on the physical median, strict",
+                    "ordering_*_p90/p95 report the same test on the tails",
+                    "blind_analysis BLIND means the grading policy was frozen before this truth was entered and is unchanged",
                     "the R-profile column (with --profile) is self-consistency, not physical error",
                     "axis from the camera path when --trajectory is given; PCA only when the patch is long and wrapped enough",
                     "measurement record, not a diagnosis"]

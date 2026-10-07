@@ -25,9 +25,25 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 OUT_ROOT = Path(__file__).resolve().parents[1] / "artifacts" / "earscan"
 
 
-def analyse(frames: list[np.ndarray], out: Path, simulated: object = None) -> dict[str, object]:
-    from eczis.lab.scan3d import Intrinsics, export_ply, reconstruct, summarize
+REFUSED_STATUSES = {"geometry_support": "NONE (sweep refused)", "lens_calibration": "UNCALIBRATED", "metric_scale": "NO_SCALE"}
 
+
+def analyse(frames: list[np.ndarray], out: Path, simulated: object = None) -> dict[str, object]:
+    from eczis.lab.scan3d import (
+        Intrinsics,
+        SweepRefused,
+        export_ply,
+        reconstruct,
+        require_usable,
+        summarize,
+    )
+
+    try:
+        quality_record = require_usable(frames)
+    except SweepRefused as exc:  # the refusal is the record: no scan.ply, status says why
+        (out / "summary.json").write_text(json.dumps({"status": str(exc), "frames_recorded": len(frames),
+                                                       "statuses": REFUSED_STATUSES}, indent=2), encoding="utf-8")
+        raise
     h, w = frames[0].shape
     if simulated is not None:
         k = simulated.k  # type: ignore[attr-defined]
@@ -60,6 +76,7 @@ def analyse(frames: list[np.ndarray], out: Path, simulated: object = None) -> di
         summary["notes"] = list(summary["notes"]) + [
             "sweep split at tracking losses; the 3D file holds the segment with the most R points"]
     summary["notes"] = list(summary["notes"]) + notes
+    summary["sweep_quality"] = quality_record
     summary["seconds"] = round(time.perf_counter() - t0, 2)
     summary["frames_recorded"] = len(frames)
     export_ply(res.points, str(out / "scan.ply"))
