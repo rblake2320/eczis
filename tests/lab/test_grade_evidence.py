@@ -100,7 +100,17 @@ def test_policy_is_versioned() -> None:
 
 
 @pytest.mark.parametrize("tol", [0.0])
-def test_zero_colour_tolerance_demotes_everything(tol: float) -> None:
+def test_zero_colour_tolerance_demotes_almost_everything(tol: float) -> None:
+    """Exact-intensity matches survive nearest-pixel lookup only rarely, so R drops from ~0.7 to < 0.2."""
     pol = {**POLICY, "colour_tol": tol}
     _, _, g = grade_keyframes([_kf(0, -3, -0.3), _kf(1, 0, 0.0), _kf(2, 3, 0.3)], policy=pol, stride=4)
     assert (g.classes == "R").mean() < 0.2  # bilinear-free nearest-pixel lookup rarely matches exactly
+
+
+def test_conflict_counts_are_populated_per_point() -> None:
+    """Grade.conflict must carry the per-point conflict counts, not zeros, and agree with the U demotions."""
+    kfs = [_kf(0, -3, -0.3), _kf(1, 0, 0.0), _kf(2, 3, 0.3), _kf(3, 1.5, 0.15, drift=0.3)]  # last one floats nearer
+    _, _, g = grade_keyframes(kfs, stride=4)
+    assert g.conflict.shape == g.classes.shape
+    assert g.reasons["depth_conflict_sheet"] == int((g.conflict > 0).sum()) > 0
+    assert (g.classes[g.conflict > 0] == "U").all()

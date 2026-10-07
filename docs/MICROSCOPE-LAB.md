@@ -15,8 +15,14 @@ uv run python tools/probe_camera.py --camera 0             # real device: modes 
 uv run python -m eczis.lab.app --camera 0 --profile my_profile.json
 ```
 
-A real camera is opened only when `--camera` is given. Without a calibration profile the
-analysis refuses with `UNCALIBRATED`.
+A real camera is opened only when `--camera` is given (every entry point: `eczis.lab.app`,
+`eczis.lab.scan_app`, `tools/ear_scan.py`, `tools/probe_camera.py`; the scan tools error out
+without `--camera` or `--simulate`). Without a calibration profile the analysis refuses with
+`UNCALIBRATED`. CERTIFIED results reported for the simulated microscope use a calibration profile
+identical to the simulator's own parameters (matched model); they show the mechanism, not
+robustness to a mis-specified profile. "Digital zoom adds no measurement" is stated by
+construction in the ranking (see `pipeline.suggest`), derived in the support-field certificate
+matrix, not re-computed per analysis.
 
 ## Agent control (MCP)
 
@@ -69,7 +75,14 @@ evidence (views, angle, reprojection) before anything is labelled R. Outputs sta
 
 ## Evidence grading of MASt3R output (2026-10-07)
 
-`eczis.lab.grade_evidence` treats the reconstructor as an untrusted proposal. Per-keyframe
+**Lab "R" is not production R.** In this section R/I/U mean multi-keyframe self-consistent /
+single-keyframe-supported / unsupported geometry inside the lab tooling. No real input is ever
+promoted to production R or M; the real-sweep fractions below are unvalidated output until a
+phantom with known geometry has graded them (benchmark protocol at the end of this file).
+
+`eczis.lab.grade_evidence` treats the reconstructor as a proposal to cross-check: the depth test
+and calibration-free intrinsics come from the reconstructor's own per-keyframe data (so they are
+self-consistency checks), while colour agreement and parallax are independent of it. Per-keyframe
 exports (points, confidence, image, Sim3 pose; `tools/spark_mast3r_evidence_patch.py`) are
 reprojected into every other keyframe and checked for depth and colour agreement and parallax.
 R needs >= 2 other keyframes agreeing with >= 2 deg parallax; a depth conflict (another keyframe

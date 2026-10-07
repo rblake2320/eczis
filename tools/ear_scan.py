@@ -146,12 +146,14 @@ def run_camera(index: int, seconds: float, stride: int, auto: float | None = Non
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--camera", type=int, default=1)
+    ap.add_argument("--camera", type=int, default=None, help="device index; a real camera opens only when given")
     ap.add_argument("--seconds", type=float, default=6.0)
     ap.add_argument("--stride", type=int, default=2, help="keep every Nth frame")
     ap.add_argument("--simulate", action="store_true", help="dry run on the synthetic canal")
     ap.add_argument("--auto", type=float, default=None, help="start recording automatically after N seconds")
     args = ap.parse_args()
+    if args.camera is None and not args.simulate:
+        ap.error("give --camera <index> to open a device, or --simulate for a dry run")
     if args.simulate:
         from eczis.lab.scan3d import simulate_sweep
 

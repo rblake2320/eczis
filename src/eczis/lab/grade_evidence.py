@@ -1,8 +1,11 @@
 # UNFILED-IP
 """Evidence grading of a dense reconstruction from per-keyframe exports (MASt3R-SLAM evidence.npz).
 
-The reconstructor is an untrusted proposal. For every keyframe pixel with a 3D point, ECZIS
-checks it against the OTHER keyframes independently:
+The reconstructor is treated as a proposal to be cross-checked, not as ground truth. The checks
+are only PARTLY independent of it: the depth test compares the reconstructor's own per-keyframe
+depths with each other, and a calibration-free run fits K from its own point map; the colour
+agreement and the parallax rule are the parts that do not come from the reconstructor. For every
+keyframe pixel with a 3D point, ECZIS checks it against the OTHER keyframes:
 
   reprojection  project the world point into keyframe j; it must land in the image, in front
   depth         keyframe j's own point at that pixel must agree in depth (relative tolerance)
@@ -112,7 +115,7 @@ def grade_keyframes(kfs: list[Keyframe], loss_after_frame: int | None = None, po
                     stride: int = 1) -> tuple[F64, npt.NDArray[np.uint8], Grade]:
     """Grade every keyframe pixel (subsampled by stride) against all other keyframes."""
     ks = [kf.k if kf.k is not None else _intrinsics_from_points(kf) for kf in kfs]
-    pts_all, col_all, cls_all, agr_all, conf_all, par_all = [], [], [], [], [], []
+    pts_all, col_all, cls_all, agr_all, conf_all, par_all, cfl_all = [], [], [], [], [], [], []
     reasons = {"single_source_view": 0, "depth_conflict_sheet": 0, "post_loss_capped": 0, "parallax_too_small": 0}
     for i, kf in enumerate(kfs):
         h, w = kf.gray.shape
@@ -170,11 +173,11 @@ def grade_keyframes(kfs: list[Keyframe], loss_after_frame: int | None = None, po
         col_all.append(np.repeat((src_gray * 255).astype(np.uint8)[:, None], 3, axis=1))
         cls_all.append(cls)
         agr_all.append(agree)
+        cfl_all.append(conflict)
         conf_all.append(kf.conf[::stride, ::stride].ravel())
         par_all.append(par)
     P = np.vstack(pts_all)
-    g = Grade(np.concatenate(cls_all), np.concatenate(agr_all), np.zeros(len(P), np.int32), np.concatenate(par_all), reasons)
-    g.conflict = np.concatenate([np.zeros(len(c), np.int32) for c in cls_all])  # per-keyframe conflicts already applied
+    g = Grade(np.concatenate(cls_all), np.concatenate(agr_all), np.concatenate(cfl_all), np.concatenate(par_all), reasons)
     return P, np.vstack(col_all), g
 
 
@@ -210,7 +213,12 @@ def grade_export(evidence_npz: str | Path, out_dir: str | Path, loss_after_frame
         "statuses": {"geometry_support": "per-point R/I/U in mast3r_evidence.ply", "lens_calibration": lens_status,
                      "metric_scale": scale_status},
         "files": {"natural": str(out / "mast3r_natural.ply"), "evidence": str(out / "mast3r_evidence.ply")},
-        "notes": ["reconstructor confidence reported, never used to promote",
+        "notes": ["LAB R means multi-keyframe self-consistent geometry; it is NOT production R/M and no real "
+                  "input is promoted to production R or M by this module",
+                  "real-sweep class fractions are unvalidated output until a phantom with known geometry grades them",
+                  "depth agreement and calibration-free intrinsics come from the reconstructor itself; only colour "
+                  "agreement and parallax are independent of it",
+                  "reconstructor confidence reported, never used to promote",
                   "R requires >= 2 other keyframes agreeing in depth and colour with >= 2 deg parallax",
                   "depth conflict (another keyframe sees a nearer surface) -> U: drifted sheet or occluder",
                   "measurement record, not a diagnosis"],

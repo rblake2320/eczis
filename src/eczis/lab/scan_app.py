@@ -380,9 +380,11 @@ def build(args: argparse.Namespace) -> ScanWindow:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="ECZIS Ear / Canal Scan (experimental)")
-    ap.add_argument("--camera", type=int, default=1)
+    ap.add_argument("--camera", type=int, default=None, help="device index; a real camera opens only when given")
     ap.add_argument("--simulate", action="store_true")
     args = ap.parse_args(argv)
+    if args.camera is None and not args.simulate:
+        ap.error("give --camera <index> to open a device, or --simulate for the synthetic canal")
     app = QApplication.instance() or QApplication(sys.argv)
     try:
         win = build(args)

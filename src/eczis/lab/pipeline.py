@@ -198,6 +198,9 @@ def suggest(
         commands[name] = (f"ZOOM {zoom}", f"CAPTURE {burst_size}") if zoom != current_zoom else (f"CAPTURE {burst_size}",)
     current_sd = float(np.sqrt(q.weights @ sf.cov @ q.weights))
     ranked = best_next_measurement(np.linalg.inv(sf.cov), candidates, q.weights)
+    # Digital zoom is appended as a literal at the current s.d.: it is not evaluated by the ranker. The
+    # derivation (resampling adds no rows to the operator, so the posterior is unchanged) lives in the
+    # support-field certificate matrix; here it is a stated consequence, not a computed one.
     ranking = tuple((name, sd) for name, sd in ranked) + (("digital zoom (adds no measurement)", current_sd),)
     best_name, best_sd = ranked[0]
     return Suggestion(best_name, commands[best_name], best_sd, 1.0 - best_sd / current_sd, ranking)
