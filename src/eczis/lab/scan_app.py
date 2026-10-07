@@ -17,6 +17,8 @@ import argparse
 import json
 import os
 import sys
+
+os.environ.setdefault("OPENCV_LOG_LEVEL", "ERROR")  # the window reports camera problems itself; no WARN flood
 import time
 from pathlib import Path
 from typing import Any
