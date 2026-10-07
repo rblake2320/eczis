@@ -48,6 +48,25 @@ textured) plus dropping tracks that never move rescued a synthetic fixed-tip cas
 0.11 mm) but degraded clean scans (0.13 -> 0.30-0.35 mm) and collapsed the first real ear sweep
 (58 -> 2 frames registered). Reverted. The real sweep's main limit was too little motion.
 
+## MASt3R-SLAM on DGX Spark (2026-10-07, first run)
+
+Built on Spark-1 (GB10, aarch64, CUDA 13, torch 2.14) in `~/eczis-3d/`; setup recorded in
+`tools/spark_mast3r_setup.sh` (six compatibility fixes). Same 120-frame ear sweep as the
+corner tracker (23:51:47), calibration-free, `--no-viz`:
+
+| | corner tracker (eczis.lab.scan3d) | MASt3R-SLAM |
+|---|---|---|
+| frames placed | 120/120 | ~90/120 (lost tracking at frame ~90, 6 relocalization attempts failed) |
+| points | 132 R / 252 I / 1540 U (sparse) | 103,559 (dense, no evidence grading) |
+| keyframes | n/a | 6 |
+| time | 1-2 s CPU | 41.6 s wall on GB10 (~4.4 fps) |
+| scale | arbitrary | arbitrary (metric head, uncalibrated lens) |
+
+Dense output is a far better surface for coverage and cross-sections; it is also confidently
+dense everywhere, including regions seen once, so ECZIS must still grade each point by its own
+evidence (views, angle, reprojection) before anything is labelled R. Outputs stay in gitignored
+`artifacts/earscan/<time>/mast3r/`. Next: use MASt3R poses as the tracker, keep ECZIS grading.
+
 ## Tested devices
 
 - USB endoscope "USB2.0 PC CAMERA" (VID 1908, PID 2311): uncompressed YUYV up to 640x480@30.
