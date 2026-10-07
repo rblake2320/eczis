@@ -159,16 +159,31 @@ class ScanResult:
     rotations: list[F64]
     tracked_frames: int
     notes: list[str] = field(default_factory=list)
+    init_gap: int = 6
 
 
 def _proj(k: F64, r_cw: F64, t_cw: F64) -> F64:
     return np.asarray(k @ np.hstack([r_cw, t_cw.reshape(3, 1)]), dtype=np.float64)
 
 
-def reconstruct(frames: list[F64], k: Intrinsics, baseline_mm: float, init_gap: int = 6,
+class NotEnoughMotion(ValueError):
+    """The camera did not move enough between frames to measure depth (no parallax)."""
+
+
+MIN_PARALLAX_PX = 25.0  # synthetic canal: 8 px pairs gave R error 0.40 mm, 25 px 0.24 mm
+
+
+def reconstruct(frames: list[F64], k: Intrinsics, baseline_mm: float, init_gap: int | None = 6,
                 min_angle_deg: float = 2.0) -> ScanResult:
-    """Monocular reconstruction. baseline_mm = true distance between camera 0 and camera init_gap."""
+    """Monocular reconstruction. baseline_mm = true distance between camera 0 and camera init_gap.
+
+    init_gap=None picks the first frame whose tracked points have moved a median of at least
+    MIN_PARALLAX_PX pixels from frame 0 (the scale then refers to that pair); if no frame does,
+    NotEnoughMotion is raised instead of returning meaningless geometry.
+    """
     import cv2
+
+    cv2.setRNGSeed(20261006)  # RANSAC sampling: identical input must give identical evidence
 
     kmat = k.matrix()
     imgs = [np.ascontiguousarray((np.clip(f, 0, 1) * 255).astype(np.uint8)) for f in frames]
@@ -202,6 +217,22 @@ def reconstruct(frames: list[F64], k: Intrinsics, baseline_mm: float, init_gap: 
                     ids.append(next_id)
                     next_id += 1
                 cur = np.vstack([cur.reshape(-1, 1, 2), new.reshape(-1, 1, 2)]).astype(np.float32)
+    # --- choose the initial pair: fixed gap, or the first frame with enough parallax
+    if init_gap is None:
+        best = 0.0
+        for g in range(2, len(imgs)):
+            pair = [i for i, t in tracks.items() if 0 in t and g in t]
+            if len(pair) < 40:
+                break
+            moved = float(np.median([np.hypot(*np.subtract(tracks[i][g], tracks[i][0])) for i in pair]))
+            best = max(best, moved)
+            if moved >= MIN_PARALLAX_PX:
+                init_gap = g
+                break
+        if init_gap is None:
+            raise NotEnoughMotion(
+                f"Not enough camera movement to measure depth: tracked points moved at most {best:.1f} px "
+                f"(need {MIN_PARALLAX_PX:.0f}). Move the tip slowly further in and out while recording.")
     # --- two-view initialisation between frame 0 and init_gap
     common = [i for i, t in tracks.items() if 0 in t and init_gap in t]
     a = np.array([tracks[i][0] for i in common])
@@ -269,7 +300,8 @@ def reconstruct(frames: list[F64], k: Intrinsics, baseline_mm: float, init_gap: 
         support = "R" if (len(dirs) >= 3 and angle >= min_angle_deg and rms <= 1.0) else (
             "I" if (angle >= min_angle_deg / 2 and rms <= 2.0) else "U")
         points.append(Point3D(x, len(dirs), angle, rms, support))
-    return ScanResult(points, [centres[f] for f in sorted(rcw)], [rcw[f].T for f in sorted(rcw)], len(rcw))
+    return ScanResult(points, [centres[f] for f in sorted(rcw)], [rcw[f].T for f in sorted(rcw)], len(rcw),
+                      init_gap=init_gap)
 
 
 # --------------------------------------------------------------------------- coverage & guidance

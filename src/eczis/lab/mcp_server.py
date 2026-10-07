@@ -180,11 +180,12 @@ def eczis_lab_scan3d_record(frames: int = 90, stride: int = 2) -> dict[str, Any]
 
 
 @server.tool(annotations=ACT)
-def eczis_lab_scan3d_reconstruct(baseline_mm: float | None = None, init_gap: int = 6,
+def eczis_lab_scan3d_reconstruct(baseline_mm: float | None = None, init_gap: int | None = None,
                                  fx: float | None = None, fy: float | None = None) -> dict[str, Any]:
     """Reconstruct the recorded sweep: points graded R/I/U, wall coverage and next-motion advice.
 
     baseline_mm = known distance moved between frame 0 and frame init_gap (gives metric scale).
+    init_gap = None picks the first frame with enough parallax; too little movement returns advice.
     fx/fy = calibrated focal length in pixels; omitted on a real camera means UNCALIBRATED.
     """
     return _call(session.scan3d_reconstruct, baseline_mm, init_gap, fx, fy)  # type: ignore[attr-defined]

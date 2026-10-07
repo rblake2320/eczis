@@ -210,10 +210,21 @@ class ScanWindow(QMainWindow):
                 return
         else:
             exp, foc, tip = guidance(grey)
-            self.status.setText(f"Exposure {exp}  |  Focus {foc}  |  {tip}")
+            self.status.setText(f"Exposure {exp}  |  Focus {foc}  |  Motion {self.motion_label(grey)}  |  {tip}")
         self.live.setPixmap(pm)
         if self.zoom_on and self.zoom_point is not None:
             self.render_zoom()
+
+    def motion_label(self, grey: np.ndarray) -> str:
+        """Live movement readout: 3D needs the tip to move; a still probe sees no depth."""
+        from eczis.lab.session import _quick_motion
+
+        prev = getattr(self, "_prev_grey", None)
+        self._prev_grey = grey
+        if prev is None or prev.shape != grey.shape:
+            return "-"
+        self._motion = 0.8 * getattr(self, "_motion", 0.0) + 0.2 * _quick_motion(prev, grey)
+        return "STILL (move slowly in/out)" if self._motion < 1.0 else ("TOO FAST" if self._motion > 25 else "GOOD")
 
     # --- actions ----------------------------------------------------------------
     def start_countdown(self) -> None:

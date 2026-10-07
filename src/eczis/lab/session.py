@@ -359,16 +359,17 @@ def _scan_record(self: LabSession, frames: int = 90, stride: int = 2) -> dict[st
     return out
 
 
-def _scan_reconstruct(self: LabSession, baseline_mm: float | None = None, init_gap: int = 6,
+def _scan_reconstruct(self: LabSession, baseline_mm: float | None = None, init_gap: int | None = None,
                       fx: float | None = None, fy: float | None = None) -> dict[str, Any]:
     from eczis.lab.scan3d import Intrinsics, reconstruct, summarize
 
-    if len(self.scan_frames) <= init_gap:
+    if len(self.scan_frames) <= (init_gap or 6):
         raise LabError("No scan recorded. Call eczis_lab_scan3d_simulate or eczis_lab_scan3d_record first.")
     h, w = self.scan_frames[0].shape
     notes: list[str] = []
     if self.scan_truth is not None:
         k = self.scan_truth.k
+        init_gap = 6 if init_gap is None else init_gap
         if baseline_mm is None:
             baseline_mm = float(np.linalg.norm(self.scan_truth.centres[init_gap] - self.scan_truth.centres[0]))
     else:
@@ -380,6 +381,8 @@ def _scan_reconstruct(self: LabSession, baseline_mm: float | None = None, init_g
             baseline_mm = 1.0
     try:
         self.scan_result = reconstruct(self.scan_frames, k, baseline_mm, init_gap=init_gap)
+    except ValueError as exc:  # includes NotEnoughMotion: its message says what to do
+        raise LabError(str(exc)) from exc
     except Exception as exc:  # noqa: BLE001 - OpenCV raises cv2.error
         raise LabError(f"Reconstruction failed ({exc}). Record a slower sweep with more texture in view.") from exc
     out = summarize(self.scan_result)

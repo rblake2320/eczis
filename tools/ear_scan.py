@@ -40,7 +40,7 @@ def analyse(frames: list[np.ndarray], out: Path, simulated: object = None) -> di
                  "NO SCALE: distances in arbitrary units until a known insertion distance is supplied",
                  "measurement record only, not a diagnosis"]
     t0 = time.perf_counter()
-    res = reconstruct(frames, k, base, init_gap=6)
+    res = reconstruct(frames, k, base, init_gap=6 if simulated is not None else None)
     summary = summarize(res)
     summary["notes"] = list(summary["notes"]) + notes
     summary["seconds"] = round(time.perf_counter() - t0, 2)

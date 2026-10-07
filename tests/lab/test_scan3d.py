@@ -66,3 +66,22 @@ def test_export_ply_colours_by_support(twisted, tmp_path: Path) -> None:  # type
     text = (tmp_path / "scan.ply").read_text(encoding="ascii").splitlines()
     assert text[2] == f"element vertex {n}" and len(text) == n + 11
     assert any(line.endswith(("37 99 235 3", "37 99 235 4")) or " 37 99 235 " in line for line in text[11:])
+
+
+def test_still_camera_reports_not_enough_motion() -> None:
+    from eczis.lab.scan3d import NotEnoughMotion
+
+    sim = simulate_sweep(frames=12, depth_mm=0.0, twist_deg=0.0, wobble_mm=0.0, k=K)  # probe held still
+    with pytest.raises(NotEnoughMotion, match="Move the tip"):
+        reconstruct(sim.frames, sim.k, 1.0, init_gap=None)
+
+
+def test_auto_init_pair_waits_for_enough_parallax(twisted) -> None:  # type: ignore[no-untyped-def]
+    sim, _ = twisted
+    from eczis.lab.scan3d import MIN_PARALLAX_PX
+
+    res = reconstruct(sim.frames, sim.k, 1.0, init_gap=None)
+    assert MIN_PARALLAX_PX >= 20  # small-parallax starts made R labels unreliable (0.40 mm at 8 px)
+    assert res.init_gap >= 2 and sum(p.support == "R" for p in res.points) > 100
+    again = reconstruct(sim.frames, sim.k, 1.0, init_gap=None)  # deterministic: same input, same evidence
+    assert again.tracked_frames == res.tracked_frames and len(again.points) == len(res.points)
