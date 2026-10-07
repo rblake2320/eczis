@@ -42,7 +42,6 @@ from eczis.lab.pipeline import (
     CalibrationProfile,
     analyze,
     investigate,
-    register,
 )
 from eczis.lab.sources import SimulatedMicroscope, glyph_scene
 
@@ -51,7 +50,7 @@ COLORS = {2: (37, 99, 235), 1: (245, 158, 11), 0: (60, 60, 60)}  # R blue, I amb
 
 
 def to_pixmap(img: np.ndarray, side: int) -> QPixmap:
-    a = np.ascontiguousarray((np.clip(img, 0, 1) * 255).astype(np.uint8))
+    a = np.ascontiguousarray(img if img.dtype == np.uint8 else (np.clip(img, 0, 1) * 255).astype(np.uint8))
     if a.ndim == 2:
         q = QImage(a.data, a.shape[1], a.shape[0], a.strides[0], QImage.Format.Format_Grayscale8)
     else:
@@ -61,20 +60,10 @@ def to_pixmap(img: np.ndarray, side: int) -> QPixmap:
 
 
 def quality(frames: list[np.ndarray]) -> dict[str, str]:
-    from scipy.ndimage import laplace
+    from eczis.lab.session import frame_quality
 
-    f = frames[-1]
-    focus = float(np.var(laplace(f.astype(np.float64))))
-    clipped = float(np.mean((f <= 0.002) | (f >= 0.998)))
-    motion = 0.0
-    if len(frames) >= 2:
-        shifts = register([frames[-2], frames[-1]])
-        motion = float(np.hypot(shifts[1][0] - shifts[0][0], shifts[1][1] - shifts[0][1]))
-    return {
-        "Focus": "GOOD" if focus > 2e-4 else "SOFT",
-        "Motion": "LOW" if motion < 0.5 else "HIGH",
-        "Exposure": "GOOD" if clipped < 0.01 else "CLIPPING",
-    }
+    q = frame_quality(frames)
+    return {"Focus": q["focus"], "Motion": q["motion"], "Exposure": q["exposure"]}
 
 
 class LiveView(QLabel):
@@ -249,9 +238,12 @@ class LabWindow(QMainWindow):
             self.update_header()
             self.say("Camera streaming.")
         self.recent = (self.recent + [frame])[-2:]
-        self.view.setPixmap(to_pixmap(frame, VIEW))
-        q = quality(self.recent)
-        self.status.setText("   ".join(f"{k}: {v}" for k, v in q.items()))
+        colour = self.source.read_display() if hasattr(self.source, "read_display") else None
+        self.view.setPixmap(to_pixmap(frame if colour is None else colour, VIEW))  # analysis stays grey
+        self._ticks = getattr(self, "_ticks", 0) + 1
+        if self._ticks % 5 == 1:  # quality readout ~2 Hz; the image itself updates every tick
+            q = quality(self.recent)
+            self.status.setText("   ".join(f"{k}: {v}" for k, v in q.items()))
 
     def say(self, text: str) -> None:
         self.log.appendPlainText(text)
@@ -383,6 +375,7 @@ def build_window(args: argparse.Namespace) -> LabWindow:
         if args.size:
             w, h = (int(v) for v in args.size.lower().split("x"))
             camera.set_mode(w, h, args.fourcc)
+        camera.start()  # frames are grabbed off the UI thread; the window never blocks on the driver
         return LabWindow(camera, load_profile(args.profile), LoggingController())
     sim = SimulatedMicroscope(glyph_scene(args.glyph == "8"), seed=args.seed)
     profile = load_profile(args.profile) or CalibrationProfile(0.70, 0.004, 700.0, zoom_levels=(1, 2, 4), source="simulated")

@@ -23,7 +23,6 @@ from eczis.lab.pipeline import (
     CalibrationProfile,
     analyze,
     investigate,
-    register,
 )
 from eczis.lab.sources import SimulatedMicroscope, glyph_scene
 
@@ -35,20 +34,42 @@ class LabError(RuntimeError):
     """Actionable error for the agent; the message says what to do next."""
 
 
+def _quick_motion(a: np.ndarray, b: np.ndarray) -> float:
+    """Integer-pixel motion via phase correlation on a <=128 px block-averaged copy (cheap).
+
+    The full sub-pixel registration is for analysis only: run per frame on 640x480 video it costs
+    seconds and froze the live view (100% CPU).
+    """
+    step = max(1, int(np.ceil(max(a.shape) / 128)))
+
+    def shrink(x: np.ndarray) -> np.ndarray:
+        h, w = (x.shape[0] // step) * step, (x.shape[1] // step) * step
+        small = x[:h, :w].astype(np.float64).reshape(h // step, step, w // step, step).mean(axis=(1, 3))
+        window = np.outer(np.hanning(small.shape[0]), np.hanning(small.shape[1]))  # tame border edges
+        return np.asarray((small - small.mean()) * window)
+
+    fa, fb = np.fft.fft2(shrink(a)), np.fft.fft2(shrink(b))
+    r = fb * np.conj(fa)
+    r /= np.maximum(np.abs(r), 1e-12)
+    corr = np.fft.ifft2(r).real
+    py, px = np.unravel_index(int(np.argmax(corr)), corr.shape)
+    h, w = corr.shape
+    dy = py - h if py > h // 2 else py
+    dx = px - w if px > w // 2 else px
+    return float(np.hypot(dx, dy) * step)
+
+
 def frame_quality(frames: list[np.ndarray]) -> dict[str, Any]:
     from scipy.ndimage import laplace
 
     f = frames[-1]
-    focus = float(np.var(laplace(f.astype(np.float64))))
+    focus = float(np.var(laplace(f.astype(np.float32))))
     clipped = float(np.mean((f <= 0.002) | (f >= 0.998)))
-    motion = 0.0
-    if len(frames) >= 2:
-        s = register([frames[-2], frames[-1]])
-        motion = float(np.hypot(s[1][0] - s[0][0], s[1][1] - s[0][1]))
+    motion = _quick_motion(frames[-2], frames[-1]) if len(frames) >= 2 else 0.0
     return {
         "focus_score": round(focus, 6), "focus": "GOOD" if focus > 2e-4 else "SOFT",
         "clipped_fraction": round(clipped, 4), "exposure": "GOOD" if clipped < 0.01 else "CLIPPING",
-        "motion_px": round(motion, 3), "motion": "LOW" if motion < 0.5 else "HIGH",
+        "motion_px": round(motion, 3), "motion": "LOW" if motion < 3.0 else "HIGH",
         "frame_shape": list(f.shape), "mean_level": round(float(f.mean()), 4),
     }
 
@@ -155,7 +176,7 @@ class LabSession:
                            "(default) or another index; list devices with eczis_lab_list_devices.") from exc
         granted = cam.set_mode(width, height, fourcc) if width and height else None
         try:
-            cam.read()
+            cam.wait_for_frame(3.0)
         except RuntimeError as exc:
             cam.close()
             raise LabError(STREAM_FAILED_HINT) from exc

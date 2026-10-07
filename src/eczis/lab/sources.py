@@ -137,14 +137,26 @@ class OpenCVCamera:
     Never started automatically: opening a camera captures whatever it points at.
     """
 
-    def __init__(self, index: int, backend: int | None = None) -> None:
+    def __init__(self, index: int, backend: int | None = None, cap: Any = None) -> None:
+        import threading
+
         import cv2
 
         self._cv2 = cv2
-        self.cap = cv2.VideoCapture(index, cv2.CAP_MSMF if backend is None else backend)
+        self.cap = cap if cap is not None else cv2.VideoCapture(index, cv2.CAP_MSMF if backend is None else backend)
         if not self.cap.isOpened():
             raise RuntimeError(f"camera {index} could not be opened")
         self.index = index
+        # A background thread owns cap.read(): driver calls can block for seconds when a camera is
+        # busy or stalls, and must never run on the UI thread.
+        self._cond = threading.Condition()
+        self._latest: F32 | None = None
+        self._latest_rgb: np.ndarray | None = None  # display only; analysis uses grey intensity
+        self._latest_t = 0.0
+        self._seq = 0
+        self._error: str | None = None
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
         self.zoom = 1  # fixed optics; magnification changes physically (distance, objective)
 
     def geometry(self) -> Geometry:
@@ -194,15 +206,79 @@ class OpenCVCamera:
         after = {p: self.cap.get(getattr(cv2, p)) for p in before}
         return {"before": before, "accepted": accepted, "after": after}
 
-    def read(self) -> F32:
-        ok, frame = self.cap.read()
-        if not ok:
-            raise RuntimeError("camera read failed")
-        gray = self._cv2.cvtColor(frame, self._cv2.COLOR_BGR2GRAY)
-        return (gray.astype(np.float32) / 255.0).astype(np.float32)
+    def _grab_loop(self) -> None:
+        import time
 
-    def capture(self, count: int) -> list[F32]:
-        return [self.read() for _ in range(count)]
+        while not self._stop.is_set():
+            ok, frame = self.cap.read()
+            if not ok or frame is None:
+                with self._cond:
+                    self._error = "camera read failed"
+                time.sleep(0.2)
+                continue
+            gray = frame if frame.ndim == 2 else self._cv2.cvtColor(frame, self._cv2.COLOR_BGR2GRAY)
+            rgb = None if frame.ndim == 2 else self._cv2.cvtColor(frame, self._cv2.COLOR_BGR2RGB)
+            img = np.asarray(np.asarray(gray, dtype=np.float32) / np.float32(255.0), dtype=np.float32)
+            with self._cond:
+                self._latest, self._seq, self._error = img, self._seq + 1, None
+                self._latest_rgb = rgb
+                self._latest_t = time.monotonic()
+                self._cond.notify_all()
+
+    def start(self) -> None:
+        import threading
+
+        if self._thread is None:
+            self._thread = threading.Thread(target=self._grab_loop, name=f"camera-{self.index}", daemon=True)
+            self._thread.start()
+
+    def wait_for_frame(self, timeout: float = 3.0) -> F32:
+        """Block (off the UI thread) until a first frame arrives, or raise with the reason."""
+        self.start()
+        with self._cond:
+            if self._latest is None:
+                self._cond.wait_for(lambda: self._latest is not None, timeout)
+            if self._latest is None:
+                raise RuntimeError(self._error or "no frames within timeout")
+            return self._latest.copy()
+
+    def read(self, max_age: float = 2.0) -> F32:
+        """Newest frame, never blocking. Transient driver read failures (common while a Media
+        Foundation stream starts) are ignored while a frame younger than max_age seconds exists."""
+        import time
+
+        self.start()
+        with self._cond:
+            if self._latest is None or time.monotonic() - self._latest_t > max_age:
+                raise RuntimeError(self._error or "no frames yet")
+            return self._latest.copy()
+
+    def read_display(self) -> np.ndarray | None:
+        """Newest colour frame (uint8 RGB) for the live view, or None if the camera is mono."""
+        with self._cond:
+            return None if self._latest_rgb is None else self._latest_rgb.copy()
+
+    def capture(self, count: int, timeout_per_frame: float = 2.0) -> list[F32]:
+        """The next `count` new frames (distinct sequence numbers), each within a timeout."""
+        self.start()
+        frames: list[F32] = []
+        with self._cond:
+            seen = self._seq
+            for _ in range(count):
+                last = seen
+
+                def newer(last: int = last) -> bool:
+                    return self._seq > last
+
+                if not self._cond.wait_for(newer, timeout_per_frame):
+                    raise RuntimeError(self._error or "camera stopped delivering frames during burst")
+                seen = self._seq
+                assert self._latest is not None
+                frames.append(self._latest.copy())
+        return frames
 
     def close(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=3.0)
         self.cap.release()
