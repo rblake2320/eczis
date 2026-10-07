@@ -32,6 +32,8 @@ grep -rl "torch.load(" --include=*.py mast3r_slam thirdparty/mast3r/mast3r third
 pip install -q --no-build-isolation -e thirdparty/mast3r
 echo "$ROOT/MASt3R-SLAM/thirdparty/mast3r/dust3r" > "$(python -c 'import site;print(site.getsitepackages()[0])')/dust3r_path.pth"
 pip install -q --no-build-isolation -e .
+# 5b. ECZIS per-keyframe evidence export (X_canon, conf, image, pose per keyframe)
+python3 "$(dirname "$0")/spark_mast3r_evidence_patch.py" 2>/dev/null || python3 ~/eczis-3d/spark_mast3r_evidence_patch.py
 # 6. checkpoints
 mkdir -p checkpoints && cd checkpoints
 for f in MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_trainingfree.pth MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_codebook.pkl; do
