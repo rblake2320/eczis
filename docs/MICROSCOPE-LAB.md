@@ -164,25 +164,55 @@ I 0.272 / U 0.461 mm median physical error, fitted R radius 3.50 mm vs true 3.50
 22:51 ear sweep gives path/straight 3.37: too wobbly for a scale, as expected for a freehand
 ear scan.
 
-1. **Print** `uv run python tools/checkerboard_print.py` at 100% (no fit-to-page); confirm the
-   20 mm bar with a ruler and pass the measured square size as `--square`.
-2. **Calibrate** `uv run python tools/calibrate_camera.py --camera 1 --square 2.0`: 8-12 diverse
-   views (tilt, corners, near/far). The profile records aggregate and **per-view** reprojection
-   RMS, camera identity and capture mode (`artifacts/calib/lens_camera1.json`); `ok` requires
-   >= 8 views and RMS <= 1.0 px, and a single view far above the rest means recapture.
-3. **Scan a straight tube phantom** of known inner diameter with the probe start/end at marked
-   insertion depths: straight, twist, repeat, plus two controls (low-motion, high-glare).
-   `uv run python tools/spark_scan.py <folder> --lens artifacts/calib/lens_camera1.json`.
-4. **Scale** `uv run python tools/scale_from_insertion.py <folder> --moved-mm <D> --single`
-   turns the marked insertion distance into `--scale-units`. The output carries the
-   path/straight-line ratio; above ~1.3 the sweep wobbled and the scale is not trusted (the
-   tool reports, the operator refuses).
-5. **Benchmark** `uv run python tools/phantom_benchmark.py <folder>/mast3r/graded.ply
-   --diameter-mm <d> --trajectory <folder>/mast3r/<name>.txt --scale-mm <D> --scale-units <u>
-   [--profile]` and report Median / P90 / P95 / coverage per class. The error is physical
-   (against the known radius); `--profile` adds a self-consistency column that is not.
+Run order (pre-registered 2026-10-07; thresholds are not changed after seeing results):
 
-Acceptance (pre-registered): R < I < U in physical mm error on every clean sweep; the scale
-is recovered within the ruler's precision; the two controls fail explicitly (NotEnoughMotion /
-glare demotion) rather than producing a confident cloud; the three statuses (geometry,
-lens_calibration, metric_scale) stay independent in every report.
+0. **Freeze the policy** `uv run python tools/freeze_policy.py` BEFORE measuring the tube or
+   looking at any error. Blind-analysis control: every benchmark output records whether the
+   grading files/constants/commit still match the freeze (`BLIND` / `CHANGED` / `NOT_FROZEN`).
+1. **Print** `uv run python tools/checkerboard_print.py` at 100% (no fit-to-page). Measure the
+   20 mm bar in BOTH directions and record it:
+   `uv run python tools/print_record.py --printer .. --paper .. --viewer .. --scaling .. --h-mm .. --v-mm ..`
+   (> 1% axis mismatch is refused: fix the print, never compensate in software). The calibrator
+   reads the record and uses the measured scale for the square size.
+2. **Calibrate** `uv run python tools/calibrate_camera.py --camera 1 --square 2.0`: 8-12 views
+   that vary position, tilt, rotation and apparent size. The profile records the model,
+   intrinsics, distortion, aggregate and per-view RMS, **held-out** RMS (each view scored by a
+   lens solved without it), view diversity, accepted count, camera identity, capture mode and
+   the print record. `ok` = >= 8 views and RMS <= 1.0 px; unstable held-out or weak diversity
+   is printed as a warning and the profile says so.
+3. **Measure and record the tube**: inner diameter (calipers), material/surface, visible
+   length, probe translation between marks, LED setting, centred or not. Record each sweep
+   with its role: `uv run python tools/phantom_record.py <folder> --role straight|twist|repeat-twist|low-motion-control|high-glare-control|wrong-calibration-control --diameter-mm .. --material .. --length-mm .. --insertion-mm .. --led .. --duration-s .. --centred yes|no`
+   (binds the frames.npz hash).
+4. **Capture** five sweeps: straight, twist, repeat-twist, deliberately low-motion, deliberately
+   high-glare. Reconstruct each: `uv run python tools/spark_scan.py <folder> --lens artifacts/calib/lens_camera1.json`.
+   Glare/dark sweeps are refused before reconstruction (`SweepRefused`, result.json carries the
+   reason); low-motion sweeps raise `NotEnoughMotion`. The wrong-calibration control re-runs one
+   valid sweep with `--lens-perturb 0.10` into `mast3r_perturbed/` (statuses say
+   `PERTURBED_CONTROL`); errors must rise or R support weaken.
+5. **Scale** `uv run python tools/scale_from_insertion.py <folder> --moved-mm <D> --single`
+   turns the marked insertion distance into `--scale-units`; path/straight above ~1.3 means the
+   sweep wobbled and the operator refuses the scale.
+6. **Benchmark** each valid sweep in both modes (global cylinder, and `--profile` which adds the
+   per-slice column and the profile-vs-global disagreement):
+   `uv run python tools/phantom_benchmark.py <folder>/mast3r/graded.ply --diameter-mm <d> --trajectory <folder>/mast3r/<name>.txt --scale-mm <D> --scale-units <u> --profile`
+7. **Assemble the record** `uv run python tools/benchmark_report.py <sweep folders...> --lens artifacts/calib/lens_camera1.json --print-record artifacts/calib/print_record.json`
+   -> `artifacts/benchmark/report-<time>/report.{md,json}`: the class table per sweep (points,
+   median, P90, P95, within 0.5 mm), diameter error by slice, every pre-registered criterion
+   with its evidence, the controls' disposition, and the bindings (frames/cloud/lens hashes,
+   MASt3R checkpoint and commit hashes, torch version, repo commit). Missing receipts are listed
+   as missing. Every run is preserved, including failures.
+
+Acceptance (pre-registered): calibration >= 8 diverse views with stable held-out error; known
+scale recovered (fitted diameter within 0.3 mm of measured, absolute mode); R < I < U physical
+error at the median AND at P90/P95 on every valid sweep; twist increases R wall coverage over
+straight; repeated twisting sweeps give compatible fitted diameters (<= 0.3 mm apart); the
+low-motion and high-glare controls fail explicitly; the wrong-calibration control degrades error
+or support; lens_calibration and metric_scale stay independent statuses; the policy freeze
+matches. The synthetic 0.2 mm R target is NOT required on the first physical run; the first run
+establishes the actual class-conditioned error. Interpretation table: ordering only on the
+fitted scan -> leakage/overfitting suspected; similar errors across classes -> the grader lacks
+physical discrimination; large R tail -> add metric uncertainty or demote unstable points;
+global and profile disagree -> tube/model mismatch; twist improves coverage but worsens error ->
+tracking or calibration degraded; a failure control that still yields R -> evidence policy
+needs repair.
