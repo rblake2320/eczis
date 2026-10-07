@@ -116,6 +116,9 @@ class LabSession:
         self.bursts: list[Burst] = []
         self.recent: list[np.ndarray] = []
         self.last: dict[str, Any] | None = None
+        self.scan_frames: list[np.ndarray] = []
+        self.scan_truth: Any = None  # SyntheticScan when simulated
+        self.scan_result: Any = None
 
     @property
     def record_path(self) -> Path | None:
@@ -324,6 +327,91 @@ class LabSession:
         self.last = out["steps"][-1]
         self.record("investigate", {"level": lvl.name, "max_steps": max_steps}, out)
         return out
+
+
+# --- 3D canal scan (EXPERIMENTAL) ------------------------------------------------
+def _scan_simulate(self: LabSession, frames: int = 60, twist_deg: float = 45.0, depth_mm: float = 6.0) -> dict[str, Any]:
+    from eczis.lab.scan3d import simulate_sweep
+
+    if not 12 <= frames <= 200:
+        raise LabError("frames must be 12..200")
+    sim = simulate_sweep(frames=frames, twist_deg=twist_deg, depth_mm=depth_mm)
+    self.scan_frames, self.scan_truth, self.scan_result = list(sim.frames), sim, None
+    out = {"frames": len(sim.frames), "source": "synthetic ear canal (r0 3.5 mm, narrowing + bump)",
+           "true_baseline_mm_frame0_to_6": round(float(np.linalg.norm(sim.centres[6] - sim.centres[0])), 4)}
+    self.record("scan3d_simulate", {"frames": frames, "twist_deg": twist_deg, "depth_mm": depth_mm}, out)
+    return out
+
+
+def _scan_record(self: LabSession, frames: int = 90, stride: int = 2) -> dict[str, Any]:
+    src = self._require_source()
+    if not 12 <= frames <= 400 or not 1 <= stride <= 10:
+        raise LabError("frames must be 12..400 and stride 1..10")
+    try:
+        raw = src.capture(frames * stride)
+    except RuntimeError as exc:
+        raise LabError(STREAM_FAILED_HINT) from exc
+    kept = list(raw[::stride])
+    self.scan_frames, self.scan_truth, self.scan_result = [np.asarray(f, np.float64) for f in kept], None, None
+    out = {"frames": len(self.scan_frames), "frame_shape": list(self.scan_frames[0].shape),
+           "hint": "move slowly in and out with a slight twist while recording"}
+    self.record("scan3d_record", {"frames": frames, "stride": stride}, out, frame_hashes=_frame_hashes(kept))
+    return out
+
+
+def _scan_reconstruct(self: LabSession, baseline_mm: float | None = None, init_gap: int = 6,
+                      fx: float | None = None, fy: float | None = None) -> dict[str, Any]:
+    from eczis.lab.scan3d import Intrinsics, reconstruct, summarize
+
+    if len(self.scan_frames) <= init_gap:
+        raise LabError("No scan recorded. Call eczis_lab_scan3d_simulate or eczis_lab_scan3d_record first.")
+    h, w = self.scan_frames[0].shape
+    notes: list[str] = []
+    if self.scan_truth is not None:
+        k = self.scan_truth.k
+        if baseline_mm is None:
+            baseline_mm = float(np.linalg.norm(self.scan_truth.centres[init_gap] - self.scan_truth.centres[0]))
+    else:
+        if fx is None:
+            notes.append("UNCALIBRATED lens: focal length guessed as 0.8 x width; geometry is approximate")
+        k = Intrinsics(fx or 0.8 * w, fy or fx or 0.8 * w, w / 2.0, h / 2.0, w, h)
+        if baseline_mm is None:
+            notes.append("NO SCALE: baseline unknown, distances are in arbitrary units")
+            baseline_mm = 1.0
+    try:
+        self.scan_result = reconstruct(self.scan_frames, k, baseline_mm, init_gap=init_gap)
+    except Exception as exc:  # noqa: BLE001 - OpenCV raises cv2.error
+        raise LabError(f"Reconstruction failed ({exc}). Record a slower sweep with more texture in view.") from exc
+    out = summarize(self.scan_result)
+    out["notes"] = out["notes"] + notes
+    if self.scan_truth is not None:
+        sim = self.scan_truth
+        r0, c0 = sim.rotations[0], sim.centres[0]
+        errs: dict[str, list[float]] = {"R": [], "I": [], "U": []}
+        for p in self.scan_result.points:
+            wp = r0 @ p.xyz + c0
+            tr = sim.canal.radius(np.array([np.arctan2(wp[1], wp[0])]), np.array([wp[2]]))[0]
+            errs[p.support].append(abs(float(np.hypot(wp[0], wp[1])) - tr))
+        out["synthetic_truth_check_median_radial_error_mm"] = {c: round(float(np.median(v)), 3) for c, v in errs.items() if v}
+    self.record("scan3d_reconstruct", {"baseline_mm": baseline_mm, "init_gap": init_gap, "fx": fx}, out)
+    return out
+
+
+def _scan_export(self: LabSession, path: str = "artifacts/scan3d/scan.ply") -> dict[str, Any]:
+    from eczis.lab.scan3d import export_ply
+
+    if self.scan_result is None:
+        raise LabError("Nothing reconstructed yet. Call eczis_lab_scan3d_reconstruct first.")
+    n = export_ply(self.scan_result.points, path)
+    out = {"path": str(Path(path).resolve()), "points": n, "colours": "R blue, I amber, U grey"}
+    self.record("scan3d_export", {"path": path}, out)
+    return out
+
+
+LabSession.scan3d_simulate = _scan_simulate  # type: ignore[attr-defined]
+LabSession.scan3d_record = _scan_record  # type: ignore[attr-defined]
+LabSession.scan3d_reconstruct = _scan_reconstruct  # type: ignore[attr-defined]
+LabSession.scan3d_export = _scan_export  # type: ignore[attr-defined]
 
 
 def list_devices() -> dict[str, Any]:

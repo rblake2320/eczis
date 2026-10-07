@@ -28,6 +28,16 @@ analysis refuses with `UNCALIBRATED`.
 `analyze`, `investigate` (control level gates execution). Errors are returned as
 `{"error": "<what to do next>"}`. Frames returned as images are sent to the calling model.
 
+## 3D canal scan (experimental)
+
+`eczis.lab.scan3d`: one moving camera -> tracked corners -> two-view start + PnP -> triangulated
+points graded R/I/U by views, triangulation angle and reprojection error -> wall coverage and
+next-motion advice -> PLY export coloured by support. MCP: `eczis_lab_scan3d_simulate`,
+`_record`, `_reconstruct`, `_export`. Synthetic ear canal (r0 3.5 mm): R points 0.13 mm median
+wall error (60-frame sweep), I 0.22 mm, U 0.37 mm. Metric scale needs one known baseline
+(insertion mark / marker); a real camera without a calibrated focal length is reported
+UNCALIBRATED. Measurement record only, not a diagnosis.
+
 ## Tested devices
 
 - USB endoscope "USB2.0 PC CAMERA" (VID 1908, PID 2311): uncompressed YUYV up to 640x480@30.

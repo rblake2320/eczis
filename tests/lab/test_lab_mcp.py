@@ -96,3 +96,13 @@ def test_capture_record_logs_every_action_without_pixels(tmp_path) -> None:  # t
     assert len(burst["frame_hashes"]) == 4 and all(len(h) == 16 for h in burst["frame_hashes"])
     assert all(x["session"] == s.session_id for x in lines)
     assert "data" not in json.dumps(lines)  # no pixel payloads in the record
+
+
+def test_scan3d_preconditions_are_actionable() -> None:
+    s = LabSession()
+    with pytest.raises(LabError, match="No scan recorded"):
+        s.scan3d_reconstruct()  # type: ignore[attr-defined]
+    with pytest.raises(LabError, match="Nothing reconstructed"):
+        s.scan3d_export()  # type: ignore[attr-defined]
+    with pytest.raises(LabError, match="No source open"):
+        s.scan3d_record(30)  # type: ignore[attr-defined]

@@ -167,6 +167,35 @@ def eczis_lab_investigate(level: str = "MANUAL", max_steps: int = 4) -> dict[str
     return _call(session.investigate, level, max_steps)
 
 
+@server.tool(annotations=ACT)
+def eczis_lab_scan3d_simulate(frames: int = 60, twist_deg: float = 45.0, depth_mm: float = 6.0) -> dict[str, Any]:
+    """Render a synthetic ear-canal sweep with known geometry (for practice and accuracy checks)."""
+    return _call(session.scan3d_simulate, frames, twist_deg, depth_mm)  # type: ignore[attr-defined]
+
+
+@server.tool(annotations=HARDWARE)
+def eczis_lab_scan3d_record(frames: int = 90, stride: int = 2) -> dict[str, Any]:
+    """Record a 3D sweep from the open camera (keep every stride-th frame). Move slowly in/out with a slight twist."""
+    return _call(session.scan3d_record, frames, stride)  # type: ignore[attr-defined]
+
+
+@server.tool(annotations=ACT)
+def eczis_lab_scan3d_reconstruct(baseline_mm: float | None = None, init_gap: int = 6,
+                                 fx: float | None = None, fy: float | None = None) -> dict[str, Any]:
+    """Reconstruct the recorded sweep: points graded R/I/U, wall coverage and next-motion advice.
+
+    baseline_mm = known distance moved between frame 0 and frame init_gap (gives metric scale).
+    fx/fy = calibrated focal length in pixels; omitted on a real camera means UNCALIBRATED.
+    """
+    return _call(session.scan3d_reconstruct, baseline_mm, init_gap, fx, fy)  # type: ignore[attr-defined]
+
+
+@server.tool(annotations=ACT)
+def eczis_lab_scan3d_export(path: str = "artifacts/scan3d/scan.ply") -> dict[str, Any]:
+    """Export the reconstruction as a PLY point cloud coloured by support (opens in Blender/MeshLab)."""
+    return _call(session.scan3d_export, path)  # type: ignore[attr-defined]
+
+
 def main() -> None:
     server.run("stdio")
 
