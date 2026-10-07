@@ -134,3 +134,29 @@ There is deliberately no digital-zoom command: it adds no measurement.
 - Real USB microscopes usually deliver MJPEG with auto exposure: use the probe tool, prefer
   uncompressed modes, and lock exposure/white balance before trusting any certificate.
 - Focus Stack and Compare are planned, not implemented.
+
+## Physical benchmark protocol (prepared 2026-10-07, not yet run)
+
+Nothing below has been measured yet; the tools exist and are unit-tested, the physical runs are
+the next step and will be recorded here with printer/paper/scaling and the raw JSON.
+
+1. **Print** `uv run python tools/checkerboard_print.py` at 100% (no fit-to-page); confirm the
+   20 mm bar with a ruler and pass the measured square size as `--square`.
+2. **Calibrate** `uv run python tools/calibrate_camera.py --camera 1 --square 2.0`: 8-12 diverse
+   views (tilt, corners, near/far). The profile records aggregate and **per-view** reprojection
+   RMS, camera identity and capture mode (`artifacts/calib/lens_camera1.json`); `ok` requires
+   >= 8 views and RMS <= 1.0 px, and a single view far above the rest means recapture.
+3. **Scan a straight tube phantom** of known inner diameter with the probe start/end at marked
+   insertion depths: straight, twist, repeat, plus two controls (low-motion, high-glare).
+   `uv run python tools/spark_scan.py <folder> --lens artifacts/calib/lens_camera1.json`.
+4. **Scale** `uv run python tools/scale_from_insertion.py <folder> --moved-mm <D> --single`
+   turns the marked insertion distance into `--scale-units`. The output carries the
+   path/straight-line ratio; above ~1.3 the sweep wobbled and the scale is not trusted.
+5. **Benchmark** `uv run python tools/phantom_benchmark.py <folder>/mast3r/graded.ply
+   --diameter-mm <d> --profile --scale-mm <D> --scale-units <u>` and report Median / P90 /
+   coverage per class.
+
+Acceptance (pre-registered): R < I < U in physical mm error on every clean sweep; the scale
+is recovered within the ruler's precision; the two controls fail explicitly (NotEnoughMotion /
+glare demotion) rather than producing a confident cloud; the three statuses (geometry,
+lens_calibration, metric_scale) stay independent in every report.

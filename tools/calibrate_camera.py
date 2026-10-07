@@ -78,7 +78,7 @@ def main() -> int:
                 if len(cal.detections) < MIN_VIEWS:
                     print(f"only {len(cal.detections)} views; need {MIN_VIEWS}")
                     continue
-                prof = cal.solve()
+                prof = cal.solve(camera=f"camera {a.camera} ({cam.describe()})", capture_mode="640x480 YUY2 MSMF")
                 OUT.mkdir(parents=True, exist_ok=True)
                 path = prof.to_json(OUT / f"lens_camera{a.camera}.json")
                 s = summary(prof)

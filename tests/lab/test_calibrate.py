@@ -48,3 +48,31 @@ def test_duplicate_poses_are_not_counted_twice() -> None:
     assert cal.add(v) is True
     assert cal.add(v) is False  # same view again: rejected as near-duplicate
     assert len(cal.detections) == 1
+
+
+def test_profile_records_per_view_errors_and_identity(tmp_path):
+    import numpy as np
+
+    from eczis.lab.calibrate import Calibrator, LensProfile, summary, synthetic_views
+
+    k = np.array([[520.0, 0, 322.0], [0, 518.0, 238.0], [0, 0, 1.0]])
+    d = np.array([-0.28, 0.09, 0.0005, -0.0004, 0.0])
+    cal = Calibrator()
+    for v in synthetic_views(k, d, (640, 480), count=24, seed=3):
+        cal.add(v)
+    prof = cal.solve(camera="camera 1 (synthetic)", capture_mode="640x480 YUY2 MSMF")
+    assert len(prof.per_view_rms_px) == prof.views >= 8
+    assert all(e >= 0 for e in prof.per_view_rms_px)
+    assert max(prof.per_view_rms_px) < 2.0  # no single view dominates on clean synthetic data
+    s = summary(prof)
+    assert s["worst_view_rms_px"] == round(max(prof.per_view_rms_px), 3)
+    back = LensProfile.from_json(prof.to_json(tmp_path / "lens.json"))
+    assert back == prof and back.camera == "camera 1 (synthetic)" and back.capture_mode == "640x480 YUY2 MSMF"
+    assert json_has_fields(tmp_path / "lens.json")
+
+
+def json_has_fields(path) -> bool:
+    import json
+
+    d = json.loads(path.read_text(encoding="utf-8"))
+    return {"per_view_rms_px", "camera", "capture_mode", "model", "created"} <= set(d)

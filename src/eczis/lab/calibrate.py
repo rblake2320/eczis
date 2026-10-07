@@ -39,12 +39,16 @@ class LensProfile:
     views: int
     square_mm: float
     source: str = "checkerboard"
+    per_view_rms_px: tuple[float, ...] = ()  # one reprojection RMS per accepted view (stability check)
+    model: str = "pinhole+k1k2p1p2 (k3 fixed 0)"
+    camera: str = ""  # device identity, e.g. "camera 1 USB2.0 PC CAMERA"
+    capture_mode: str = ""  # e.g. "640x480 YUY2 MSMF"
 
     def to_json(self, path: str | Path) -> Path:
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps({**asdict(self), "dist": list(self.dist), "created": time.strftime("%Y-%m-%dT%H:%M:%S")},
-                                indent=2), encoding="utf-8")
+        p.write_text(json.dumps({**asdict(self), "dist": list(self.dist), "per_view_rms_px": list(self.per_view_rms_px),
+                                 "created": time.strftime("%Y-%m-%dT%H:%M:%S")}, indent=2), encoding="utf-8")
         return p
 
     @staticmethod
@@ -52,6 +56,7 @@ class LensProfile:
         d = json.loads(Path(path).read_text(encoding="utf-8"))
         d.pop("created", None)
         d["dist"] = tuple(d["dist"])
+        d["per_view_rms_px"] = tuple(d.get("per_view_rms_px", ()))
         return LensProfile(**d)
 
     def matrix(self) -> F64:
@@ -99,7 +104,7 @@ class Calibrator:
         self.detections.append(c)
         return True
 
-    def solve(self) -> LensProfile:
+    def solve(self, camera: str = "", capture_mode: str = "") -> LensProfile:
         import cv2
 
         if len(self.detections) < MIN_VIEWS or self.image_size is None:
@@ -107,11 +112,16 @@ class Calibrator:
                              "tilt and move the board between captures")
         obj = [self._object_points()] * len(self.detections)
         imgp = [np.asarray(d, dtype=np.float32).reshape(-1, 1, 2) for d in self.detections]
-        rms, k, dist, _, _ = cv2.calibrateCamera(obj, imgp, self.image_size, None, None, flags=cv2.CALIB_FIX_K3)
+        rms, k, dist, rvecs, tvecs = cv2.calibrateCamera(obj, imgp, self.image_size, None, None, flags=cv2.CALIB_FIX_K3)
         d = np.asarray(dist).ravel()
+        per_view = []
+        for o, ip, rv, tv in zip(obj, imgp, rvecs, tvecs, strict=True):
+            proj, _ = cv2.projectPoints(o, rv, tv, k, dist)
+            per_view.append(float(np.sqrt(np.mean(np.sum((proj.reshape(-1, 2) - ip.reshape(-1, 2)) ** 2, axis=1)))))
         return LensProfile(float(k[0, 0]), float(k[1, 1]), float(k[0, 2]), float(k[1, 2]),
                            tuple(float(v) for v in d[:5]), self.image_size[0], self.image_size[1],
-                           float(rms), len(self.detections), self.square_mm)
+                           float(rms), len(self.detections), self.square_mm, per_view_rms_px=tuple(per_view),
+                           camera=camera, capture_mode=capture_mode)
 
 
 # --------------------------------------------------------------------------- synthetic board
@@ -163,4 +173,6 @@ def summary(profile: LensProfile) -> dict[str, Any]:
     return {"fx": round(profile.fx, 2), "fy": round(profile.fy, 2), "cx": round(profile.cx, 2), "cy": round(profile.cy, 2),
             "k1": round(profile.dist[0], 4), "k2": round(profile.dist[1], 4), "rms_px": round(profile.rms_px, 3),
             "views": profile.views, "ok": profile.ok(),
+            "per_view_rms_px": [round(v, 3) for v in profile.per_view_rms_px],
+            "worst_view_rms_px": round(max(profile.per_view_rms_px), 3) if profile.per_view_rms_px else None,
             "hfov_deg": round(float(2 * np.degrees(np.arctan(profile.width / (2 * profile.fx)))), 1)}
