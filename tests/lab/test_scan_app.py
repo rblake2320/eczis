@@ -61,3 +61,30 @@ def test_guidance_flags_glare_and_darkness() -> None:
 
     assert sa.guidance(np.ones((10, 10), np.float32))[0] == "GLARE"
     assert sa.guidance(np.zeros((10, 10), np.float32))[0] == "TOO DARK"
+
+
+def test_live_view_keeps_updating_while_recording(win) -> None:  # type: ignore[no-untyped-def]
+    """Regression: capture ran on the UI thread, freezing the picture for the whole sweep."""
+
+    class SlowSource(sa.SyntheticSource):
+        def capture(self, count: int) -> list:  # type: ignore[override]
+            time.sleep(1.5)  # a real 8 s sweep blocks for 8 s
+            return super().capture(count)
+
+    win.source = SlowSource()
+    win.secs.setValue(3)
+    t0 = time.monotonic()
+    win.record()
+    assert time.monotonic() - t0 < 0.3  # record() must not block the UI thread
+    keys = set()
+    while time.monotonic() - t0 < 1.0:
+        win.tick()
+        keys.add(win.live.pixmap().cacheKey())
+        QApplication.processEvents()
+        time.sleep(0.05)
+    assert "RECORDING" in win.status.text()
+    assert len(keys) > 3  # the live picture kept changing during the recording
+    while not win.rec_btn.isEnabled() and time.monotonic() - t0 < 120:
+        QApplication.processEvents()
+        time.sleep(0.05)
+    assert "3D done" in win.log.toPlainText() or "Not enough" in win.log.toPlainText() or "failed" in win.log.toPlainText()

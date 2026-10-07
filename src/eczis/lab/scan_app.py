@@ -90,6 +90,23 @@ class SyntheticSource:
         pass
 
 
+class CaptureWorker(QObject):
+    """Grabs the sweep's frames off the UI thread so the live view keeps moving while recording."""
+
+    done = Signal(list)
+    failed = Signal(str)
+
+    def __init__(self, source: Any, count: int) -> None:
+        super().__init__()
+        self.source, self.count = source, count
+
+    def run(self) -> None:
+        try:
+            self.done.emit(list(self.source.capture(self.count)))
+        except RuntimeError as exc:
+            self.failed.emit(f"Recording stopped: {exc}. Is another app using the camera?")
+
+
 class ReconWorker(QObject):
     done = Signal(dict)
 
@@ -131,6 +148,7 @@ class ScanWindow(QMainWindow):
         self.zoom_on = False
         self.zoom_point: tuple[float, float] | None = None
         self.countdown_end: float | None = None
+        self.recording_until: float | None = None
         self.last_folder: Path | None = None
         self.session_folder = OUT_ROOT / time.strftime("%Y%m%d-%H%M%S")
         self.recon_thread: QThread | None = None
@@ -200,7 +218,13 @@ class ScanWindow(QMainWindow):
         self.frame_grey, self.frame_rgb = grey, colour
         show = colour if colour is not None else grey
         pm = to_pixmap(show, VIEW_W, VIEW_H)
-        if self.countdown_end is not None:
+        recording_until = getattr(self, "recording_until", None)
+        if recording_until is not None:
+            left = max(0.0, recording_until - time.monotonic())
+            self.status.setText(f"● RECORDING {left:0.0f} s left - move slowly in and out  |  "
+                                f"Motion {self.motion_label(grey)}")
+            self.status.setStyleSheet("font-size:15px;font-weight:bold;padding:4px;color:#b91c1c")
+        elif self.countdown_end is not None:
             left = self.countdown_end - time.monotonic()
             if left > 0:
                 self.status.setText(f"RECORDING IN {left:0.0f}... get in position")
@@ -209,6 +233,7 @@ class ScanWindow(QMainWindow):
                 self.record()
                 return
         else:
+            self.status.setStyleSheet("font-size:15px;font-weight:bold;padding:4px")
             exp, foc, tip = guidance(grey)
             self.status.setText(f"Exposure {exp}  |  Focus {foc}  |  Motion {self.motion_label(grey)}  |  {tip}")
         self.live.setPixmap(pm)
@@ -232,16 +257,33 @@ class ScanWindow(QMainWindow):
         self.say(f"Recording {self.secs.value():.0f} s after a 3 s countdown...")
 
     def record(self) -> None:
-        self.status.setText("RECORDING: move slowly in and out with a slight twist")
-        QApplication.processEvents()
         n = int(self.secs.value() * 30)
-        frames = self.source.capture(n)[::2]
+        self.recording_until = time.monotonic() + self.secs.value()
+        self.rec_btn.setEnabled(False)
+        self.say(f"Recording {self.secs.value():.0f} s: keep watching the live view and move slowly in and out.")
+        self.capture_thread = QThread()
+        self.capturer = CaptureWorker(self.source, n)
+        self.capturer.moveToThread(self.capture_thread)
+        self.capture_thread.started.connect(self.capturer.run)
+        self.capturer.done.connect(self.capture_done)
+        self.capturer.failed.connect(self.capture_failed)
+        self.capturer.done.connect(self.capture_thread.quit)
+        self.capturer.failed.connect(self.capture_thread.quit)
+        self.capture_thread.start()
+
+    def capture_failed(self, message: str) -> None:
+        self.recording_until = None
+        self.rec_btn.setEnabled(True)
+        self.say(message)
+
+    def capture_done(self, raw: list[np.ndarray]) -> None:
+        self.recording_until = None
+        frames = raw[::2]
         out = OUT_ROOT / time.strftime("%Y%m%d-%H%M%S")
         out.mkdir(parents=True, exist_ok=True)
         np.savez_compressed(out / "frames.npz", frames=np.stack(frames).astype(np.float32))
         self.last_folder = out
         self.say(f"Recorded {len(frames)} frames. Reconstructing in the background...")
-        self.rec_btn.setEnabled(False)
         self.recon_thread = QThread()
         self.worker = ReconWorker(frames, out, getattr(self.source, "sim", None) if self.simulated else None)
         self.worker.moveToThread(self.recon_thread)
