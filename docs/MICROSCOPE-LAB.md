@@ -38,6 +38,16 @@ wall error (60-frame sweep), I 0.22 mm, U 0.37 mm. Metric scale needs one known 
 (insertion mark / marker); a real camera without a calibrated focal length is reported
 UNCALIBRATED. Measurement record only, not a diagnosis.
 
+Scan window: `uv run python -m eczis.lab.scan_app` (camera 1) or `--simulate`. Buttons: Record
+sweep (3 s countdown), Snapshot (full-resolution colour PNG), Ultra-zoom (click the live image;
+8x pixel view, labelled as adding no detail), Open 3D / Open folder; reconstruction runs on a
+worker thread.
+
+Negative result (2026-10-06): masking "probe-fixed" regions (low temporal variance, optionally
+textured) plus dropping tracks that never move rescued a synthetic fixed-tip case (R error 0.24 ->
+0.11 mm) but degraded clean scans (0.13 -> 0.30-0.35 mm) and collapsed the first real ear sweep
+(58 -> 2 frames registered). Reverted. The real sweep's main limit was too little motion.
+
 ## Tested devices
 
 - USB endoscope "USB2.0 PC CAMERA" (VID 1908, PID 2311): uncompressed YUYV up to 640x480@30.
