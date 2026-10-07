@@ -94,7 +94,10 @@ def run(folder: Path, host: str, lens: Path | None, stride: int) -> dict[str, ob
         k = np.array([[0.8 * w, 0, w / 2], [0, 0.8 * w, h / 2], [0, 0, 1.0]])
         lens_note = "UNCALIBRATED lens (0.8 x width guess); NO SCALE"
     g = grade_mast3r_output(out / f"{name}.ply", out / f"{name}.txt", k, (w, h), out / "graded.ply")
-    result = {**g, "lens": lens_note, "frames_sent": int(len(frames)), "host": host,
+    statuses = {"geometry_support": "per-point R/I/U in graded.ply",
+                "lens_calibration": "CALIBRATED" if lens is not None else "UNCALIBRATED",
+                "metric_scale": "NO_SCALE"}  # a lens alone does not give scale; needs a known length
+    result = {**g, "lens": lens_note, "statuses": statuses, "frames_sent": int(len(frames)), "host": host,
               "seconds": {"push": round(t_push, 1), "slam": round(t_slam, 1), "total": round(time.perf_counter() - t0, 1)},
               "slam_log_tail": log_tail, "measurement_record_not_diagnosis": True}
     (out / "result.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
