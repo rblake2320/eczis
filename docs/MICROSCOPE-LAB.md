@@ -67,6 +67,30 @@ dense everywhere, including regions seen once, so ECZIS must still grade each po
 evidence (views, angle, reprojection) before anything is labelled R. Outputs stay in gitignored
 `artifacts/earscan/<time>/mast3r/`. Next: use MASt3R poses as the tracker, keep ECZIS grading.
 
+## Evidence grading of MASt3R output (2026-10-07)
+
+`eczis.lab.grade_evidence` treats the reconstructor as an untrusted proposal. Per-keyframe
+exports (points, confidence, image, Sim3 pose; `tools/spark_mast3r_evidence_patch.py`) are
+reprojected into every other keyframe and checked for depth and colour agreement and parallax.
+R needs >= 2 other keyframes agreeing with >= 2 deg parallax; a depth conflict (another keyframe
+sees a nearer surface) forces U; keyframes after a declared tracking loss cap at I. Reconstructor
+confidence is reported, never used to promote. Statuses stay independent: geometry R/I/U,
+`lens_calibration: UNCALIBRATED`, `metric_scale: NO_SCALE`.
+
+Real 23:51 sweep (6 keyframes, loss after frame 90): 294,912 points -> R 50% / I 16% / U 34%
+(71k single-view, 50k depth-conflict = drifted sheets, 6k parallax too small). The
+`comparison.png` shows the main wall patch R and the overlapping sheets U.
+
+Synthetic-canal validation: **not achieved.** MASt3R's own reconstruction of the synthetic
+canal is wrong independent of grading: every keyframe's point map sits ~3 mm from the true wall
+(radius ~0.3-0.7 mm vs true 3.5 mm), with Sim3 scales drifting 1.0 -> 0.22, so no class ordering
+R < I < U can appear (all ~3.1 mm). The corner tracker gets 0.13 mm on the same frames. Likely
+cause: the synthetic frames (320x240, flat texture, near-field LED shading) are far from the
+model's training distribution. The grader is instead validated on synthetic multi-keyframe
+scenes with known geometry (`tests/lab/test_grade_evidence.py`): consistent wall 72% R,
+single view / duplicate cameras never R, floating sheet demoted, post-loss capped.
+Open: a synthetic canal MASt3R can actually reconstruct (richer texture, higher resolution).
+
 ## Tested devices
 
 - USB endoscope "USB2.0 PC CAMERA" (VID 1908, PID 2311): uncompressed YUYV up to 640x480@30.
