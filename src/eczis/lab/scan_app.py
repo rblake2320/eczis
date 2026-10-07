@@ -360,6 +360,11 @@ class ScanWindow(QMainWindow):
 
     def closeEvent(self, ev: Any) -> None:  # noqa: N802
         self.timer.stop()
+        # A QThread destroyed while running crashes the process; finish capture/reconstruction first.
+        for t in (getattr(self, "capture_thread", None), self.recon_thread):
+            if t is not None and t.isRunning():
+                t.quit()
+                t.wait(20000)
         if hasattr(self.source, "close"):
             self.source.close()
         super().closeEvent(ev)

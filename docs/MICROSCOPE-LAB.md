@@ -58,7 +58,7 @@ textured) plus dropping tracks that never move rescued a synthetic fixed-tip cas
 
 Built on Spark-1 (GB10, aarch64, CUDA 13, torch 2.14) in `~/eczis-3d/`; setup recorded in
 `tools/spark_mast3r_setup.sh` (six compatibility fixes). Same 120-frame ear sweep as the
-corner tracker (23:51:47), calibration-free, `--no-viz`:
+corner tracker (`artifacts/earscan/20261006-225147`, 22:51:47), calibration-free, `--no-viz`:
 
 | | corner tracker (eczis.lab.scan3d) | MASt3R-SLAM |
 |---|---|---|
@@ -90,7 +90,7 @@ sees a nearer surface) forces U; keyframes after a declared tracking loss cap at
 confidence is reported, never used to promote. Statuses stay independent: geometry R/I/U,
 `lens_calibration: UNCALIBRATED`, `metric_scale: NO_SCALE`.
 
-Real 23:51 sweep (6 keyframes, loss after frame 90): 294,912 points -> R 50% / I 16% / U 34%
+Real 22:51 sweep (`artifacts/earscan/20261006-225147/mast3r/grading_report.json`; 6 keyframes, loss after frame 90): 294,912 points -> R 50% / I 16% / U 34%
 (71k single-view, 50k depth-conflict = drifted sheets, 6k parallax too small). The
 `comparison.png` shows the main wall patch R and the overlapping sheets U.
 
@@ -150,8 +150,19 @@ There is deliberately no digital-zoom command: it adds no measurement.
 
 ## Physical benchmark protocol (prepared 2026-10-07, not yet run)
 
-Nothing below has been measured yet; the tools exist and are unit-tested, the physical runs are
+No physical run has been made yet; the tools exist and are unit-tested, the physical runs are
 the next step and will be recorded here with printer/paper/scaling and the raw JSON.
+
+Diagnostic runs so far (synthetic, not physical): the first benchmark version fitted the tube
+axis by PCA of the R points and, on the synthetic canal's short wall patch, chose an axis 90 deg
+off the true one (|cos| 0.006, found by independent review) while still printing R < I < U
+under `--profile` -- a wrong-axis result that looked like a pass. The benchmark now takes the
+axis from the camera trajectory (`--trajectory`) and refuses PCA unless the patch is clearly
+longer than wide and wraps the tube; on the same cloud with the true trajectory: R 0.176 /
+I 0.272 / U 0.461 mm median physical error, fitted R radius 3.50 mm vs true 3.50
+(`artifacts/scan3d/phantom_benchmark.json`). `scale_from_insertion.py --single` on the real
+22:51 ear sweep gives path/straight 3.37: too wobbly for a scale, as expected for a freehand
+ear scan.
 
 1. **Print** `uv run python tools/checkerboard_print.py` at 100% (no fit-to-page); confirm the
    20 mm bar with a ruler and pass the measured square size as `--square`.
@@ -164,10 +175,12 @@ the next step and will be recorded here with printer/paper/scaling and the raw J
    `uv run python tools/spark_scan.py <folder> --lens artifacts/calib/lens_camera1.json`.
 4. **Scale** `uv run python tools/scale_from_insertion.py <folder> --moved-mm <D> --single`
    turns the marked insertion distance into `--scale-units`. The output carries the
-   path/straight-line ratio; above ~1.3 the sweep wobbled and the scale is not trusted.
+   path/straight-line ratio; above ~1.3 the sweep wobbled and the scale is not trusted (the
+   tool reports, the operator refuses).
 5. **Benchmark** `uv run python tools/phantom_benchmark.py <folder>/mast3r/graded.ply
-   --diameter-mm <d> --profile --scale-mm <D> --scale-units <u>` and report Median / P90 /
-   coverage per class.
+   --diameter-mm <d> --trajectory <folder>/mast3r/<name>.txt --scale-mm <D> --scale-units <u>
+   [--profile]` and report Median / P90 / P95 / coverage per class. The error is physical
+   (against the known radius); `--profile` adds a self-consistency column that is not.
 
 Acceptance (pre-registered): R < I < U in physical mm error on every clean sweep; the scale
 is recovered within the ruler's precision; the two controls fail explicitly (NotEnoughMotion /

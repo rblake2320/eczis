@@ -116,7 +116,7 @@ def grade_keyframes(kfs: list[Keyframe], loss_after_frame: int | None = None, po
     """Grade every keyframe pixel (subsampled by stride) against all other keyframes."""
     ks = [kf.k if kf.k is not None else _intrinsics_from_points(kf) for kf in kfs]
     pts_all, col_all, cls_all, agr_all, conf_all, par_all, cfl_all = [], [], [], [], [], [], []
-    reasons = {"single_source_view": 0, "depth_conflict_sheet": 0, "post_loss_capped": 0, "parallax_too_small": 0}
+    reasons = {"no_agreeing_view": 0, "depth_conflict_sheet": 0, "post_loss_capped": 0, "parallax_too_small": 0}
     for i, kf in enumerate(kfs):
         h, w = kf.gray.shape
         pw = kf.points_w[::stride, ::stride].reshape(-1, 3)
@@ -164,7 +164,7 @@ def grade_keyframes(kfs: list[Keyframe], loss_after_frame: int | None = None, po
         cls[r_ok] = "R"
         cls[conflict > 0] = "U"
         reasons["depth_conflict_sheet"] += int((conflict > 0).sum())
-        reasons["single_source_view"] += int((agree == 0).sum())
+        reasons["no_agreeing_view"] += int((agree == 0).sum())  # no other keyframe agreed: unseen OR seen but depth/colour failed
         if loss_after_frame is not None and kf.frame_id > loss_after_frame:
             capped = cls == "R"
             reasons["post_loss_capped"] += int(capped.sum())

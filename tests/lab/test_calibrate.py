@@ -76,3 +76,17 @@ def json_has_fields(path) -> bool:
 
     d = json.loads(path.read_text(encoding="utf-8"))
     return {"per_view_rms_px", "camera", "capture_mode", "model", "created"} <= set(d)
+
+
+def test_old_format_profile_without_new_fields_loads(tmp_path):
+    """Profiles written before per-view errors / identity were recorded must still load."""
+    import json
+
+    from eczis.lab.calibrate import LensProfile
+
+    old = {"fx": 500.0, "fy": 500.0, "cx": 320.0, "cy": 240.0, "dist": [0.1, -0.2, 0.0, 0.0, 0.0], "width": 640, "height": 480,
+           "rms_px": 0.4, "views": 10, "square_mm": 2.0, "source": "checkerboard", "created": "2026-10-06T00:00:00"}
+    p = tmp_path / "old.json"
+    p.write_text(json.dumps(old), encoding="utf-8")
+    prof = LensProfile.from_json(p)
+    assert prof.per_view_rms_px == () and prof.camera == "" and prof.capture_mode == "" and prof.ok()

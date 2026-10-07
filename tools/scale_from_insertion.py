@@ -1,20 +1,22 @@
 # UNFILED-IP
 """Measure the metric scale of a reconstruction from a known probe movement.
 
-    uv run python tools/scale_from_insertion.py <folder_A> <folder_B> --moved-mm 5.0
+    uv run python tools/scale_from_insertion.py <folder> --moved-mm 5.0 --single
 
-Two sweeps of the same tube, with the probe pushed in by a known distance between them (read it
-off a mark on the probe). Each folder holds the reconstruction's trajectory (mast3r/<name>.txt,
-TUM format). The tool aligns B's camera path onto A's by the shared wall (both see the same
-tube) and reports how far the camera start moved in cloud units, so that
+One sweep in which the probe started at insertion mark 0 and ended at mark D (mm) while
+recording. The folder holds the reconstruction's trajectory (mast3r/<name>.txt, TUM format);
+the straight-line distance between the FIRST and LAST keyframe camera centres is taken to be
+D mm, so
 
     scale_units_to_mm = moved_mm / moved_units
 
-which is exactly the pair phantom_benchmark.py needs as --scale-mm / --scale-units.
+which is exactly the pair phantom_benchmark.py needs as --scale-mm / --scale-units. Caveats the
+operator owns: the first keyframe must coincide with mark 0 and the last with mark D (keyframes,
+not the first/last recorded frames); a wobbly path overstates the straight-line distance, so the
+path/straight ratio is reported and anything above ~1.3 should not be used.
 
-Simpler single-sweep alternative supported too: a known INSERTION DEPTH within one sweep, i.e.
-the probe started at mark 0 and ended at mark D while recording; then the first-to-last camera
-distance in units corresponds to D mm (--single, uses the trajectory's own end points).
+The two-folder form is NOT implemented: two independent monocular reconstructions have unrelated
+scales and no shared landmark, so the tool refuses with the reason (exit 1) rather than guessing.
 Monocular reconstructions have arbitrary scale; this is the honest way to attach millimetres.
 """
 from __future__ import annotations
@@ -35,6 +37,8 @@ def traj(folder: Path) -> np.ndarray:
     files = sorted((folder / "mast3r").glob("*.txt")) if (folder / "mast3r").exists() else []
     if not files:
         raise SystemExit(f"no mast3r/*.txt trajectory in {folder}; run tools/spark_scan.py on it first")
+    if len(files) > 1:
+        raise SystemExit(f"{folder}/mast3r holds {len(files)} trajectories ({[f.name for f in files]}); keep exactly one")
     poses = read_tum_trajectory(files[0])
     if len(poses) < 2:
         raise SystemExit(f"{files[0]} has {len(poses)} poses; need >= 2 keyframes")
