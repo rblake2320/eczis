@@ -32,6 +32,7 @@ PHONE_COMMAND = ROOT / "artifacts" / "coach" / "phone_command.json"
 PHONE_STATUS = ROOT / "artifacts" / "coach" / "phone_status.json"  # what the page reports back: version, last command result
 AVATAR_DIR = ROOT / "artifacts" / "phone_cam" / "avatar"  # downscaled face frames (operator-owned art, not committed)
 SPEECH_WAV = ROOT / "artifacts" / "coach" / "speech_last.wav"  # latest coach line rendered on the PC, played by the phone too
+CHANNEL_HEARD = ROOT / "artifacts" / "coach" / "heard.jsonl"  # same log the microphone listener appends to
 PORT = 8443
 
 PAGE = """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -45,7 +46,7 @@ video{width:100%;flex:1;object-fit:contain;background:#111}
 <audio id="spk" playsinline preload="auto"></audio>
 <img id="ava" src="/avatar/neutral.jpg" style="position:fixed;top:10px;right:10px;width:34vw;max-width:220px;border-radius:14px;box-shadow:0 2px 14px #000;z-index:8;display:block">
 <video id="v" autoplay playsinline muted></video><div id="cap"></div>
-<div id="bar"><button id="still">Still (full res)</button><button id="flip">Flip</button><button id="mute">Voice on</button></div>
+<div id="bar"><button id="still">Still (full res)</button><button id="flip">Flip</button><button id="mute">Voice on</button><button id="mic">Mic off</button></div>
 <select id="cam" style="font-size:16px;margin:0 8px 6px 8px;padding:8px;background:#111;color:#fff;border:1px solid #444"></select>
 <div id="st">connecting...</div>
 <script>
@@ -71,6 +72,18 @@ let audioOk=false,ac=null;
 function sayLocal(text){ if('speechSynthesis'in window){speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(text);u.rate=1.0;u.onstart=startMouth;u.onend=stopMouth;u.onerror=stopMouth;speechSynthesis.speak(u);} }
 function unlock(){ try{ ac=ac||new (window.AudioContext||window.webkitAudioContext)(); ac.resume(); const el=document.getElementById('spk'); el.muted=false; el.play().catch(()=>{}); audioOk=true; st.textContent=st.textContent.replace(' | tap to enable voice','')+' | voice unlocked'; }catch(e){} }
 document.addEventListener('touchend',unlock,{once:true}); document.addEventListener('click',unlock,{once:true});
+let micOn=false,rec=null,micStream=null,ana=null;
+async function micStart(){ if(micOn)return; try{ micStream=await navigator.mediaDevices.getUserMedia({audio:true});
+  ac=ac||new (window.AudioContext||window.webkitAudioContext)(); const src=ac.createMediaStreamSource(micStream); ana=ac.createAnalyser(); ana.fftSize=512; src.connect(ana);
+  micOn=true; document.getElementById('mic').textContent='Mic on'; loopMic(); }catch(e){st.textContent='mic denied: '+e;} }
+function micLevel(){ const d=new Uint8Array(ana.fftSize); ana.getByteTimeDomainData(d); let s=0; for(const v of d){const x=(v-128)/128; s+=x*x;} return Math.sqrt(s/d.length); }
+let talking=false,quietN=0,chunks=[];
+function loopMic(){ if(!micOn)return; const lvl=micLevel(); if(lvl>0.02&&!talking&&!mouthTimer){ talking=true;quietN=0;chunks=[]; try{ rec=new MediaRecorder(micStream); rec.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);}; rec.onstop=sendChunk; recStart=Date.now(); rec.start(); }catch(e){st.textContent='recorder: '+e;talking=false;} }
+  else if(talking){ if(lvl<0.012)quietN++; else quietN=0; if(quietN>=12||(rec&&rec.state==='recording'&&chunksSec()>12)){ talking=false; try{rec.stop();}catch(e){} } }
+  setTimeout(loopMic,80); }
+let recStart=0; function chunksSec(){return (Date.now()-recStart)/1000;}
+async function sendChunk(){ const blob=new Blob(chunks,{type:rec.mimeType||'audio/mp4'}); if(blob.size<2000)return; try{ await fetch('/hear',{method:'POST',body:blob,headers:{'Content-Type':blob.type}}); st.textContent='sent '+Math.round(blob.size/1024)+' kB of speech'; }catch(e){st.textContent='hear failed: '+e;} }
+document.getElementById('mic').onclick=()=>{ if(micOn){micOn=false;micStream.getTracks().forEach(t=>t.stop());document.getElementById('mic').textContent='Mic off';} else micStart(); };
 let avaState='neutral',mouthTimer=null,blinkTimer=null;
 function showFrame(n){ava.src='/avatar/'+n+'.jpg';}
 function setAvatar(s){ avaState=s; if(!mouthTimer)showFrame(s); lastResult='avatar:'+s; }
@@ -91,7 +104,7 @@ function drawStripes(period,phase,orient){ pat.width=innerWidth;pat.height=inner
   for(let y=0;y<h;y++){for(let x=0;x<w;x++){const u=orient==='H'?y:x;const g=Math.round(255*(0.5+0.5*Math.cos(2*Math.PI*u/period+phase)));const i=4*(y*w+x);d[i]=g;d[i+1]=g;d[i+2]=g;d[i+3]=255;}} ctx2.putImageData(img,0,0); }
 function connect(){ poll(); }
 const c=document.createElement('canvas');
-const PAGE_VERSION='cmd-2'; let lastResult='';
+const PAGE_VERSION='cmd-4-mic'; let lastResult='';
 async function post(kind,blob){ const r=await fetch('/frame?kind='+kind,{method:'POST',body:blob,headers:{'Content-Type':'image/jpeg','X-Page':PAGE_VERSION,'X-Last':lastResult.slice(0,120)}}); return r.ok; }
 function frame(){ if(!sending&&v.videoWidth){sending=true;c.width=v.videoWidth;c.height=v.videoHeight;c.getContext('2d').drawImage(v,0,0);
   c.toBlob(b=>{post(0,b).catch(()=>{}).finally(()=>{sending=false;});},'image/jpeg',0.85);}
@@ -167,7 +180,64 @@ class PhoneCamera:
     # --- server -----------------------------------------------------------------
     def start(self) -> str:
         self._thread.start()
+        threading.Thread(target=self._serve_ask, daemon=True).start()
         return f"https://{lan_ip()}:{self.port}/"
+
+    _whisper: Any = None
+
+    def _transcribe(self, path: Path) -> None:
+        """Phone mic chunk -> text in the heard log (faster-whisper on the GPU; the file is deleted after)."""
+        try:
+            if PhoneCamera._whisper is None:
+                from faster_whisper import WhisperModel
+
+                try:
+                    PhoneCamera._whisper = WhisperModel("base.en", device="cuda", compute_type="float16")
+                except Exception:  # noqa: BLE001
+                    PhoneCamera._whisper = WhisperModel("base.en", device="cpu", compute_type="int8")
+            segs, _ = PhoneCamera._whisper.transcribe(str(path), language="en", beam_size=1, vad_filter=True)
+            text = " ".join(s.text.strip() for s in segs).strip()
+            if text:
+                CHANNEL_HEARD.parent.mkdir(parents=True, exist_ok=True)
+                with CHANNEL_HEARD.open("a", encoding="utf-8") as f:
+                    f.write(json.dumps({"t": time.time(), "text": text, "via": "phone-mic"}) + "\n")
+        except Exception as exc:  # noqa: BLE001 - transcription is a convenience; log and move on
+            try:
+                (CHANNEL_HEARD.parent / "phone_mic_errors.log").open("a", encoding="utf-8").write(f"{time.time()} {exc}\n")
+            except OSError:
+                pass
+        finally:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    def _serve_ask(self) -> None:
+        """Plain-HTTP text intake for Siri Shortcuts (they reject the self-signed certificate): POST /ask {"text": ...}
+        appends the words to the coach's heard log exactly as the microphone listener does, so the agent answers
+        through the page (caption, voice, face). Text only, LAN only."""
+        import uvicorn
+        from starlette.applications import Starlette
+        from starlette.responses import JSONResponse
+        from starlette.routing import Route
+
+        heard = CHANNEL_HEARD
+
+        async def ask(req: Any) -> JSONResponse:
+            try:
+                data = await req.json()
+            except ValueError:
+                data = {"text": (await req.body()).decode("utf-8", "ignore")}
+            text = str(data.get("text", "")).strip()
+            if not text:
+                return JSONResponse({"ok": False, "error": "no text"}, status_code=400)
+            heard.parent.mkdir(parents=True, exist_ok=True)
+            with heard.open("a", encoding="utf-8") as f:
+                f.write(json.dumps({"t": time.time(), "text": text, "via": "siri-shortcut"}) + "\n")
+            return JSONResponse({"ok": True, "heard": text})
+
+        app = Starlette(routes=[Route("/ask", ask, methods=["POST"])])
+        uvicorn.run(app, host="0.0.0.0", port=self.port + 1, log_level="warning")  # noqa: S104 - LAN text intake by design
 
     def _serve(self) -> None:
         import uvicorn
@@ -214,8 +284,16 @@ class PhoneCamera:
             f = AVATAR_DIR / name
             return FileResponse(str(f)) if f.exists() and f.suffix == ".jpg" else PlainTextResponse("no such frame", status_code=404)
 
+        async def hear(req: Any) -> JSONResponse:
+            body = await req.body()
+            ext = ".mp4" if "mp4" in req.headers.get("content-type", "") else ".webm"
+            path = CHANNEL_HEARD.parent / f"phone_mic_{int(time.time() * 1000)}{ext}"
+            path.write_bytes(body)
+            threading.Thread(target=self._transcribe, args=(path,), daemon=True).start()
+            return JSONResponse({"ok": True, "bytes": len(body)})
+
         crt, key = ensure_cert()
-        app = Starlette(routes=[Route("/", page), Route("/frame", frame, methods=["POST"]), Route("/caption", caption),
+        app = Starlette(routes=[Route("/", page), Route("/frame", frame, methods=["POST"]), Route("/caption", caption), Route("/hear", hear, methods=["POST"]),
                                 Route("/avatar/{name}", avatar), Route("/speech/{sid}", speech)])
         uvicorn.run(app, host="0.0.0.0", port=self.port, ssl_certfile=str(crt), ssl_keyfile=str(key), log_level="warning")  # noqa: S104 - LAN page by design
 
