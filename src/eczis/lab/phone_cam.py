@@ -47,7 +47,7 @@ video{width:100%;max-height:52vh;flex:0 1 auto;object-fit:contain;background:#11
 <audio id="spk" playsinline preload="auto"></audio>
 <img id="ava" src="/avatar/neutral.jpg" style="position:fixed;top:10px;right:10px;width:34vw;max-width:220px;border-radius:14px;box-shadow:0 2px 14px #000;z-index:8;display:block">
 <video id="v" autoplay playsinline muted></video><div id="cap"></div>
-<div id="bar"><button id="still">Still (full res)</button><button id="flip">Flip</button><button id="mute">Voice on</button><button id="mic">Auto-listen off</button><button id="ptt" style="background:#b91c1c">Hold to talk</button></div>
+<div id="bar"><button id="still">Still (full res)</button><button id="flip">Flip</button><button id="mute" style="background:#15803d">&#128266; Voice: ON</button><button id="mic">Auto-listen off</button><button id="ptt" style="background:#b91c1c">Hold to talk</button></div>
 <select id="cam" style="font-size:16px;margin:0 8px 6px 8px;padding:8px;background:#111;color:#fff;border:1px solid #444"></select>
 <div id="st">connecting...</div>
 <script>
@@ -114,6 +114,7 @@ async function handle(cmd,a){ lastResult=cmd+':start'; setTimeout(()=>{lastResul
   else if(cmd==='camera'){const o=[...sel.options].find(o=>o.textContent.toLowerCase().includes((a.name||'back').toLowerCase()));if(o){deviceId=o.value;sel.value=deviceId;start();}}
   else if(cmd==='stripes'){pat.style.display='block';drawStripes(a.period||60,a.phase||0,a.orient||'V');lastResult='stripes:shown '+pat.width+'x'+pat.height;}
   else if(cmd==='clear'){pat.style.display='none';lastResult='clear:ok';}
+  else if(cmd==='voice'){ setVoice(a.on!==false); audioOk=true; if(ac)ac.resume(); lastResult='voice:'+(voice?'on':'off'); }
   else if(cmd==='avatar'){ if(a.state==='off'){ava.style.display='none';lastResult='avatar:off';} else {ava.style.display='block';setAvatar(a.state||'neutral');} }
   else if(cmd==='beep'){ac=ac||new (window.AudioContext||window.webkitAudioContext)();const o=ac.createOscillator();o.frequency.value=880;o.connect(ac.destination);o.start();setTimeout(()=>o.stop(),250);lastResult='beep:'+ac.state;}
  }catch(e){st.textContent='command failed: '+e;lastResult=cmd+':error '+e} }
@@ -121,7 +122,7 @@ function drawStripes(period,phase,orient){ pat.width=innerWidth;pat.height=inner
   for(let y=0;y<h;y++){for(let x=0;x<w;x++){const u=orient==='H'?y:x;const g=Math.round(255*(0.5+0.5*Math.cos(2*Math.PI*u/period+phase)));const i=4*(y*w+x);d[i]=g;d[i+1]=g;d[i+2]=g;d[i+3]=255;}} ctx2.putImageData(img,0,0); }
 function connect(){ poll(); }
 const c=document.createElement('canvas');
-const PAGE_VERSION='cmd-10-voicediag'; let lastResult='';
+const PAGE_VERSION='cmd-11-voicebtn'; let lastResult='';
 async function post(kind,blob){ const r=await fetch('/frame?kind='+kind,{method:'POST',body:blob,headers:{'Content-Type':'image/jpeg','X-Page':PAGE_VERSION,'X-Last':(lastResult||(micDiag+' '+voiceDiag)).slice(0,200)}}); return r.ok; }
 function frame(){ if(!sending&&v.videoWidth){sending=true;c.width=v.videoWidth;c.height=v.videoHeight;c.getContext('2d').drawImage(v,0,0);
   c.toBlob(b=>{post(0,b).catch(()=>{}).finally(()=>{sending=false;});},'image/jpeg',0.85);}
@@ -131,7 +132,8 @@ async function sendStill(){ try{ const tr=stream.getVideoTracks()[0]; let blob;
   await post(1,blob); st.textContent='still sent '+Math.round(blob.size/1024)+' kB'; }catch(e){st.textContent='still failed: '+e} }
 document.getElementById('still').onclick=sendStill;
 document.getElementById('flip').onclick=()=>{facing=facing==='environment'?'user':'environment';deviceId=null;start();};
-document.getElementById('mute').onclick=e=>{voice=!voice;e.target.textContent=voice?'Voice on':'Voice off';};
+function setVoice(on){ voice=on; const b=document.getElementById('mute'); b.innerHTML=on?'&#128266; Voice: ON':'&#128263; Voice: OFF'; b.style.background=on?'#15803d':'#6b7280'; vd('set '+(on?'on':'off')); }
+document.getElementById('mute').onclick=()=>setVoice(!voice);
 start().then(()=>{connect();frame();}).catch(e=>{st.textContent='camera denied: '+e});
 </script></body></html>"""
 
