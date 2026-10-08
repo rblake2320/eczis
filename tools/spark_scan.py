@@ -51,6 +51,12 @@ def remote_environment(host: str) -> dict[str, str]:
     return env
 
 
+def lens_note_for(lens: Path | None, lens_perturb: float) -> str:
+    if lens is None:
+        return "UNCALIBRATED lens (0.8 x width guess); NO SCALE"
+    return f"calibrated lens {lens.name}" + (f" PERTURBED {lens_perturb:+.0%} (wrong-calibration control)" if lens_perturb else "")
+
+
 def run(folder: Path, host: str, lens: Path | None, stride: int, lens_perturb: float = 0.0) -> dict[str, object]:
     """lens_perturb != 0 is the wrong-calibration control: the given lens is deliberately mis-specified
     (fx, fy scaled by 1+p, cx shifted by p*width/2) and the output goes to mast3r_perturbed/ so the valid
@@ -132,6 +138,18 @@ def run(folder: Path, host: str, lens: Path | None, stride: int, lens_perturb: f
     else:
         k = np.array([[0.8 * w, 0, w / 2], [0, 0.8 * w, h / 2], [0, 0, 1.0]])
         lens_note = "UNCALIBRATED lens (0.8 x width guess); NO SCALE"
+    from eczis.lab.grade_dense import read_ply
+
+    n_pts = len(read_ply(out / f"{name}.ply")[0])
+    if n_pts < 100:  # the reconstructor found nothing to anchor on: say so, do not grade an empty cloud
+        refused = {"status": f"REFUSED: reconstructor returned {n_pts} points (featureless or static view); nothing to grade",
+                   "frames_sent": int(len(frames)), "keyframes_in_trajectory": sum(1 for _ in open(out / f"{name}.txt", encoding="utf-8")),
+                   "sweep_quality": quality_record, "lens": lens_note_for(lens, lens_perturb),
+                   "statuses": {"geometry_support": "NONE (empty reconstruction)",
+                                "lens_calibration": "CALIBRATED" if lens is not None else "UNCALIBRATED", "metric_scale": "NO_SCALE"},
+                   "slam_log_tail": log_tail, "measurement_record_not_diagnosis": True}
+        (out / "result.json").write_text(json.dumps(refused, indent=2), encoding="utf-8")
+        raise SystemExit(refused["status"])
     g = grade_mast3r_output(out / f"{name}.ply", out / f"{name}.txt", k, (w, h), out / "graded.ply")
     statuses = {"geometry_support": "per-point R/I/U in graded.ply",
                 "lens_calibration": (f"PERTURBED_CONTROL({lens_perturb:+.0%})" if lens_perturb else "CALIBRATED") if lens is not None else "UNCALIBRATED",

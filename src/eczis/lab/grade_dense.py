@@ -69,6 +69,8 @@ def read_ply(path: str | Path) -> tuple[F64, npt.NDArray[np.uint8] | None]:
     else:
         st = "<" + "".join(fmt[p[0]] for p in props)
         rows = np.array(list(struct.iter_unpack(st, raw[end : end + n * struct.calcsize(st)])), dtype=np.float64)
+    if n == 0 or rows.ndim != 2:
+        return np.zeros((0, 3), dtype=np.float64), None
     xyz = rows[:, [names.index("x"), names.index("y"), names.index("z")]]
     rgb = rows[:, [names.index(c) for c in ("red", "green", "blue")]].astype(np.uint8) if "red" in names else None
     return np.asarray(xyz, dtype=np.float64), rgb

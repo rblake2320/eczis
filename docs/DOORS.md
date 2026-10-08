@@ -1,0 +1,66 @@
+# UNFILED-IP
+# Capability doors — things the bench showed are needed, with the evidence that showed it
+
+A door is logged when work makes a previously unavailable capability possible or shows it is
+required. Each entry keeps the triggering evidence, the prior art looked at, and the routing
+decision. Evidence words: observed / reproduced / measured / verified. "Novel" is never claimed
+without a prior-art search recorded here.
+
+## DOOR-20261007-01 — Smooth / specular interiors need projected texture and specular control
+
+**Triggering evidence (observed, 2026-10-07 live bench, real endoscope, policy frozen 13:40):**
+- Sweep `20261007-212758`, aluminium tube: refused at the image-quality gate, clipped-bright
+  median 12.3 % (threshold 5 %). Record: `summary.json` status `REFUSED: GLARE`.
+- Sweep `20261007-213024`, matte package interior: passed glare (3.3 %), refused for motion,
+  tracked points moved 3.5 px (threshold 25). Record: `summary.json` status `REFUSED: NOT ENOUGH MOTION`.
+- Sweep `20261007-215934`, same interior, enough motion: local tracker placed 25 of 120 frames in
+  3 segments, R 6 / I 50 / U 989; MASt3R-SLAM on the Spark with the calibrated lens returned a
+  **0-vertex** cloud and 11 poses with ~0.004 units of total translation. Record:
+  `mast3r/result.json` status `REFUSED: reconstructor returned 0 points`.
+- The operator's stated target is plumbing: "pipes are smooth and slick".
+
+**Why (physics):** every camera-only method here (LK tracking, MASt3R) needs wall appearance
+that differs from place to place. A slick wall gives saturated specular hotspots, featureless
+regions between them, and reflections that move with the camera (violating the static-scene
+assumption). The refusals are correct behaviour; the imaging is starved.
+
+**Prior art (looked at, not exhaustive):** industrial measurement borescopes project laser
+dots/lines or a shadow stripe from the tip for metric 3D on reflective interiors (Olympus
+IPLEX stereo/laser tips, Waygate Mentor Visual iQ 3D phase measurement); cross-polarised
+illumination is standard for suppressing specular reflection in dermatology and machine
+vision; structured light (dot grids, ring projectors) is standard in pipe profiling. None of
+this is novel; what ECZIS adds is per-point evidence grading on top of whatever texture source
+is used, and explicit refusal when there is none.
+
+**What it would take:**
+1. Projected texture at the tip: a laser dot-grid/ring cap or a separate laser pointer with a
+   grid diffraction cap shone down the pipe (cheap test, no code change: the motion gate,
+   Spark reconstruction, grading and phantom benchmark all run as-is on the dots).
+2. Specular control: diffuser on the LED ring; cross-polarised LED + lens polariser.
+3. Later: use the specular highlight curve on a cylinder as a geometric cue (weaker, model-based).
+
+**Value:** inside this project it is the difference between "works on textured canals" and
+"works on pipes"; outside it, the same probe + grading applies to any reflective bore
+(hydraulic lines, heat-exchanger tubes, gun barrels, ducts).
+
+**Routing (owner decision pending):** immediate cheap test with a laser pointer + grid cap and
+LED tape on the aluminium tube; if dots track, add a projected-texture mode to the protocol
+(record the projector as part of the capture mode) before any claim about pipes.
+
+## DOOR-20261007-02 — Evidence-labelled image clean-up from a burst (text on packaging)
+
+**Trigger (observed):** operator snapshots of a drink-mix package: large print readable, fine
+print not, single frames defocused (lens focus 1-3 cm). Request: "clean up how the writing looks".
+
+**Built:** `tools/burst_enhance.py` — ECC registration of a recorded burst to a reference frame,
+mean fusion, per-pixel R/I/U support by frame agreement, optional Richardson-Lucy deblur labelled
+as a re-rendering that adds no evidence. No generative model.
+
+**Measured (2026-10-07 22:04, burst `artifacts/earscan/20261007-220435`, 120 frames of the
+package's warning text, real endoscope):** 120/120 frames aligned (ECC correlation median
+0.998); support R 99.0 % / I 0.9 % / U 0.1 % of pixels; noise removed from the reference frame
+s.d. 0.0137 (intensity units). Fine print that is grainy in the single frame reads cleanly in
+`fused.png` / `fused_deblur.png` ("Do not exceed 2 packets per day", "consult your ... practitioner
+before use if ... pregnant, nursing, taking medication", "out of reach of children", "B6 (as
+pyridoxine ...)"). The same burst is REFUSED for 3D (glare 17.2 %): image clean-up and 3D have
+different gates, and the record says which applied. Operator-side artifacts stay local (gitignored).
