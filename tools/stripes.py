@@ -20,7 +20,7 @@ from pathlib import Path
 
 OUT = Path(__file__).resolve().parents[1] / "artifacts" / "deflectometry"
 
-HTML = """<!doctype html><html><head><meta charset="utf-8"><title>ECZIS stripes</title>
+HTML = """<!doctype html><!-- UNFILED-IP --><html><head><meta charset="utf-8"><title>ECZIS stripes</title>
 <style>html,body{margin:0;height:100%;background:#000;overflow:hidden}canvas{display:block}
 #idx{position:fixed;right:14px;bottom:10px;color:#444;font:16px monospace}</style></head><body>
 <canvas id="c"></canvas><div id="idx"></div><script>
