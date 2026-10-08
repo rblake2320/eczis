@@ -210,9 +210,11 @@ ordering and AudioContext playback fixes.
 Streaming ASR + streaming TTS + barge-in would reach ~1.5 s with Claude in the loop; sub-200 ms
 full-duplex means PersonaPlex (already on Spark-1) speaking for itself with the lab behind it.
 
-**Routing decision (owner, 2026-10-08):** this capability is a separate product and now lives in its own
-private repository; it is no longer developed here. The lab copies of the phone bridge, coach and responder
-stay as bench tooling only. The phantom benchmark work above is paused, not abandoned.
+**Routing decision (owner, 2026-10-08):** this capability is a standalone product and now lives in its own
+private repository, developed there. It is related to ECZIS: it grew out of this bench and can serve as the
+phone front end for the evidence lab later; the separation is of repo, identity and IP, not of lineage. The
+lab copies of the phone bridge, coach and responder stay here as bench tooling. The phantom benchmark work
+above is paused, not abandoned.
 
 **Product note (operator asked about the App Store):** feasible as a native iOS client (camera
 control, ARKit depth/pose, on-device or server speech, the face) with the evidence core kept
