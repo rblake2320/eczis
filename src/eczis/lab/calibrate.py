@@ -28,6 +28,7 @@ HELD_OUT_MAX_PX = 1.5  # a view the solver never saw must still reproject within
 MIN_CENTRE_SPREAD = 0.08  # std of the board centre across views, as a fraction of the image size
 MIN_TILT_DEG = 12.0  # at least one view this far from front-facing, or distortion/focal length stay entangled
 MIN_SIZE_RATIO = 1.25  # apparent board size must vary (near and far views)
+MIN_HFOV_DEG, MAX_HFOV_DEG = 25.0, 150.0  # plausible horizontal field of view for this camera class
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +75,18 @@ class LensProfile:
 
     def ok(self) -> bool:
         return self.views >= MIN_VIEWS and self.rms_px <= MAX_RMS_PX
+
+    def hfov_deg(self) -> float:
+        return float(2 * np.degrees(np.arctan(self.width / (2 * self.fx))))
+
+    def plausible(self) -> bool:
+        """Field of view within the range any endoscope/microscope lens can have; a solve on nearly
+        front-facing views runs off to fx in the thousands (8 deg FOV) and this catches it."""
+        return MIN_HFOV_DEG <= self.hfov_deg() <= MAX_HFOV_DEG
+
+    def usable(self) -> bool:
+        """ok() plus held-out stability, view diversity and a plausible field of view."""
+        return self.ok() and self.held_out_stable() is not False and self.diverse() is not False and self.plausible()
 
     def held_out_stable(self) -> bool | None:
         """Held-out error no worse than max(1.5 px, 2 x fitted RMS) on every view; None if not computed."""
@@ -238,4 +251,5 @@ def summary(profile: LensProfile) -> dict[str, Any]:
             "held_out_rms_px": [round(v, 3) for v in profile.held_out_rms_px],
             "held_out_max_px": round(max(profile.held_out_rms_px), 3) if profile.held_out_rms_px else None,
             "held_out_stable": profile.held_out_stable(), "diversity": profile.diversity, "diverse": profile.diverse(),
+            "plausible_fov": profile.plausible(), "usable": profile.usable(),
             "hfov_deg": round(float(2 * np.degrees(np.arctan(profile.width / (2 * profile.fx)))), 1)}
