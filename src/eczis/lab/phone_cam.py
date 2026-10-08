@@ -51,15 +51,17 @@ video{width:100%;flex:1;object-fit:contain;background:#111}
 <div id="st">connecting...</div>
 <script>
 const st=document.getElementById('st'),cap=document.getElementById('cap'),v=document.getElementById('v');
-let facing='environment',stream,ws,voice=true,lastCap='',sending=false,deviceId=null;
+let facing='environment',stream,ws,voice=true,lastCap='',sending=false,deviceId=null,micOn=false,rec=null,micStream=null,ana=null,ac=null;
 const sel=document.getElementById('cam');
 async function listCams(){ const devs=(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==='videoinput'); sel.innerHTML='';
  for(const d of devs){const o=document.createElement('option');o.value=d.deviceId;o.textContent=d.label||('camera '+(sel.length+1));sel.appendChild(o);}
  const single=devs.find(d=>/^back camera$/i.test(d.label))||devs.find(d=>/back/i.test(d.label)&&!/dual|triple|wide/i.test(d.label));
  if(single&&!deviceId){deviceId=single.deviceId;sel.value=deviceId;} }
+let wantMic=false;
 async function start(){ if(stream)stream.getTracks().forEach(t=>t.stop());
  const cons=deviceId?{deviceId:{exact:deviceId},width:{ideal:1920},height:{ideal:1080}}:{facingMode:facing,width:{ideal:1920},height:{ideal:1080}};
- stream=await navigator.mediaDevices.getUserMedia({video:cons,audio:false});
+ stream=await navigator.mediaDevices.getUserMedia({video:cons,audio:wantMic?{echoCancellation:true,noiseSuppression:true}:false});
+ if(wantMic&&stream.getAudioTracks().length){ micStream=new MediaStream(stream.getAudioTracks()); ac=ac||new (window.AudioContext||window.webkitAudioContext)(); const src=ac.createMediaStreamSource(micStream); ana=ac.createAnalyser(); ana.fftSize=512; src.connect(ana); if(!micOn){micOn=true;document.getElementById('mic').textContent='Mic on';loopMic();} }
  v.srcObject=stream; await listCams(); const tr=stream.getVideoTracks()[0]; const s=tr.getSettings();
  st.textContent=`camera ${s.width}x${s.height} ${tr.label}`; tr.onmute=()=>{st.textContent='camera paused by iOS (lens switch?) - restarting';setTimeout(start,500);}; }
 sel.onchange=()=>{deviceId=sel.value;start();};
@@ -68,14 +70,12 @@ let linked=false; async function poll(){ try{ const r=await fetch('/caption',{ca
    if(voice&&m.caption){ if(m.audio&&audioOk){ const el=document.getElementById('spk'); el.src='/speech/'+m.audio+'.wav'; el.onplay=startMouth; el.onended=stopMouth; el.onerror=()=>{stopMouth();sayLocal(m.caption);}; el.play().catch(()=>sayLocal(m.caption)); } else sayLocal(m.caption); }}
    if(m.command)handle(m.command,m.args||{}); }catch(e){ if(linked){linked=false;st.textContent+=' | link lost';} } setTimeout(poll,500); }
 const pat=document.getElementById('pat'),ava=document.getElementById('ava');
-let audioOk=false,ac=null;
+let audioOk=false;
 function sayLocal(text){ if('speechSynthesis'in window){speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(text);u.rate=1.0;u.onstart=startMouth;u.onend=stopMouth;u.onerror=stopMouth;speechSynthesis.speak(u);} }
 function unlock(){ try{ ac=ac||new (window.AudioContext||window.webkitAudioContext)(); ac.resume(); const el=document.getElementById('spk'); el.muted=false; el.play().catch(()=>{}); audioOk=true; st.textContent=st.textContent.replace(' | tap to enable voice','')+' | voice unlocked'; }catch(e){} }
 document.addEventListener('touchend',unlock,{once:true}); document.addEventListener('click',unlock,{once:true});
-let micOn=false,rec=null,micStream=null,ana=null;
-async function micStart(){ if(micOn)return; try{ micStream=await navigator.mediaDevices.getUserMedia({audio:true});
-  ac=ac||new (window.AudioContext||window.webkitAudioContext)(); const src=ac.createMediaStreamSource(micStream); ana=ac.createAnalyser(); ana.fftSize=512; src.connect(ana);
-  micOn=true; document.getElementById('mic').textContent='Mic on'; loopMic(); }catch(e){st.textContent='mic denied: '+e;} }
+
+async function micStart(){ if(micOn)return; wantMic=true; try{ await start(); }catch(e){st.textContent='mic denied: '+e; wantMic=false;} }
 function micLevel(){ const d=new Uint8Array(ana.fftSize); ana.getByteTimeDomainData(d); let s=0; for(const v of d){const x=(v-128)/128; s+=x*x;} return Math.sqrt(s/d.length); }
 let talking=false,quietN=0,chunks=[];
 function loopMic(){ if(!micOn)return; const lvl=micLevel(); if(lvl>0.02&&!talking&&!mouthTimer){ talking=true;quietN=0;chunks=[]; try{ rec=new MediaRecorder(micStream); rec.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);}; rec.onstop=sendChunk; recStart=Date.now(); rec.start(); }catch(e){st.textContent='recorder: '+e;talking=false;} }
@@ -83,7 +83,7 @@ function loopMic(){ if(!micOn)return; const lvl=micLevel(); if(lvl>0.02&&!talkin
   setTimeout(loopMic,80); }
 let recStart=0; function chunksSec(){return (Date.now()-recStart)/1000;}
 async function sendChunk(){ const blob=new Blob(chunks,{type:rec.mimeType||'audio/mp4'}); if(blob.size<2000)return; try{ await fetch('/hear',{method:'POST',body:blob,headers:{'Content-Type':blob.type}}); st.textContent='sent '+Math.round(blob.size/1024)+' kB of speech'; }catch(e){st.textContent='hear failed: '+e;} }
-document.getElementById('mic').onclick=()=>{ if(micOn){micOn=false;micStream.getTracks().forEach(t=>t.stop());document.getElementById('mic').textContent='Mic off';} else micStart(); };
+document.getElementById('mic').onclick=()=>{ if(micOn){micOn=false;wantMic=false;document.getElementById('mic').textContent='Mic off';start();} else micStart(); };
 let avaState='neutral',mouthTimer=null,blinkTimer=null;
 function showFrame(n){ava.src='/avatar/'+n+'.jpg';}
 function setAvatar(s){ avaState=s; if(!mouthTimer)showFrame(s); lastResult='avatar:'+s; }
@@ -104,7 +104,7 @@ function drawStripes(period,phase,orient){ pat.width=innerWidth;pat.height=inner
   for(let y=0;y<h;y++){for(let x=0;x<w;x++){const u=orient==='H'?y:x;const g=Math.round(255*(0.5+0.5*Math.cos(2*Math.PI*u/period+phase)));const i=4*(y*w+x);d[i]=g;d[i+1]=g;d[i+2]=g;d[i+3]=255;}} ctx2.putImageData(img,0,0); }
 function connect(){ poll(); }
 const c=document.createElement('canvas');
-const PAGE_VERSION='cmd-4-mic'; let lastResult='';
+const PAGE_VERSION='cmd-5-onestream'; let lastResult='';
 async function post(kind,blob){ const r=await fetch('/frame?kind='+kind,{method:'POST',body:blob,headers:{'Content-Type':'image/jpeg','X-Page':PAGE_VERSION,'X-Last':lastResult.slice(0,120)}}); return r.ok; }
 function frame(){ if(!sending&&v.videoWidth){sending=true;c.width=v.videoWidth;c.height=v.videoHeight;c.getContext('2d').drawImage(v,0,0);
   c.toBlob(b=>{post(0,b).catch(()=>{}).finally(()=>{sending=false;});},'image/jpeg',0.85);}
