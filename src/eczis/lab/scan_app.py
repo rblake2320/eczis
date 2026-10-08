@@ -338,6 +338,11 @@ class ScanWindow(QMainWindow):
 
     def snapshot(self) -> None:
         img = self.frame_rgb if self.frame_rgb is not None else self.frame_grey
+        if hasattr(self.source, "request_still"):
+            still = self.source.request_still()
+            if still is not None:
+                img = still
+                self.say(f"Full-resolution still from the phone: {still.shape[1]}x{still.shape[0]}")
         if img is None:
             return
         self.session_folder.mkdir(parents=True, exist_ok=True)
@@ -414,6 +419,15 @@ class ScanWindow(QMainWindow):
 def build(args: argparse.Namespace) -> ScanWindow:
     if args.simulate:
         return ScanWindow(SyntheticSource(), simulated=True)
+    if getattr(args, "phone", False):
+        from eczis.lab.coach import CAPTION
+        from eczis.lab.phone_cam import PhoneCamera
+
+        phone = PhoneCamera(caption_path=CAPTION)
+        url = phone.start()
+        print(f"Open on the phone (same Wi-Fi): {url}   accept the certificate warning once, allow the camera", flush=True)
+        phone.wait_for_frame(timeout=180.0)
+        return ScanWindow(phone)
     import cv2
 
     from eczis.lab.sources import OpenCVCamera
@@ -428,9 +442,10 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="ECZIS Ear / Canal Scan (experimental)")
     ap.add_argument("--camera", type=int, default=None, help="device index; a real camera opens only when given")
     ap.add_argument("--simulate", action="store_true")
+    ap.add_argument("--phone", action="store_true", help="use a phone's camera through the LAN page (eczis.lab.phone_cam)")
     args = ap.parse_args(argv)
-    if args.camera is None and not args.simulate:
-        ap.error("give --camera <index> to open a device, or --simulate for the synthetic canal")
+    if args.camera is None and not args.simulate and not args.phone:
+        ap.error("give --camera <index> to open a device, --phone for a phone, or --simulate for the synthetic canal")
     app = QApplication.instance() or QApplication(sys.argv)
     try:
         win = build(args)

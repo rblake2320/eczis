@@ -98,3 +98,30 @@ native pixels, labelled enhancement, convex-mirror geometry) is sound and cheap;
 scene identity needs a sensor with roughly 10-50x the pixels on the cornea. Not novel; a
 possible ECZIS angle is the evidence labelling of such enhancements (what is supported by how
 many frames) rather than the recovery itself. Routing: roadmap note only; no claim.
+
+## DOOR-20261007-04 — The phone as the sensor: live bridge, LiDAR scale, deflectometry for slick pipes
+
+**Trigger:** operator question "could you ever see what my phone shows in a live camera view";
+phone is an iPhone with LiDAR.
+
+**Built tonight:** `eczis.lab.phone_cam` — a local HTTPS page (self-signed, LAN only) the phone
+opens in its browser; frames stream to the PC over a WebSocket, the coach caption is shown on
+the phone and spoken by the phone; `scan_app --phone` runs the whole scan window on it, with
+full-resolution stills on Snapshot. `tools/lidar_stream.py` — Record3D USB receiver (colour,
+LiDAR depth in metres, camera pose, phone-reported intrinsics) writing the lab's layout; written
+before being run against a phone, so unverified.
+
+**Why it matters:** (1) the phone's depth and pose are measurements INDEPENDENT of the
+reconstructor, so the evidence grader can check MASt3R against them instead of against itself;
+(2) metric scale and intrinsics arrive with every frame, closing NO_SCALE/UNCALIBRATED without a
+ruler; (3) **deflectometry** — showing a known stripe pattern on the monitor/phone and recording
+its reflection in a shiny surface is the standard way to measure mirror-like surfaces; the
+reflection that broke the matcher becomes the measurement (prior art: phase-measuring
+deflectometry, Knauer/Kaminski/Häusler 2004; used industrially for car bodies and optics); the
+corneal-reflection result above is the same physics on a convex mirror. Also: the phone can watch
+the endoscope from outside and give the probe's insertion distance from its own tracking.
+
+**Routing:** build order per the operator's plan: web bridge (done) -> Record3D depth/pose
+(needs the app on the phone + USB) -> deflectometry test on the aluminium tube with phase-shifted
+stripes on the LG monitor -> corneal reflection at phone resolution. Keep compressed live video
+for guidance only; evidence comes from stills/RAW/depth.
