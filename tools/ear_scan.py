@@ -17,8 +17,12 @@ import json
 import sys
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from eczis.lab.scan3d import ScanResult
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -57,19 +61,19 @@ def analyse(frames: list[np.ndarray], out: Path, simulated: object = None) -> di
                  "measurement record only, not a diagnosis"]
     t0 = time.perf_counter()
     segments_info: list[dict[str, object]] = []
-    if simulated is not None:
-        res = reconstruct(frames, k, base, init_gap=6)
-    else:
-        from eczis.lab.scan3d import reconstruct_segments
+    from eczis.lab.scan3d import NotEnoughMotion
 
-        segs = reconstruct_segments(frames, k, base)
-        if not segs:
-            res = reconstruct(frames, k, base, init_gap=None)  # raises NotEnoughMotion with advice
+    try:
+        if simulated is not None:
+            res = reconstruct(frames, k, base, init_gap=6)
         else:
-            for s in segs:
-                segments_info.append({"frames": f"{s.start}-{s.end}", "placed": s.end - s.start + 1,
-                                      "R": sum(p.support == "R" for p in s.result.points)})
-            res = max(segs, key=lambda s: sum(p.support == "R" for p in s.result.points)).result
+            res = _reconstruct_real(frames, k, base, segments_info)
+    except NotEnoughMotion as exc:  # the refusal is the record, like glare
+        (out / "summary.json").write_text(json.dumps({"status": f"REFUSED: NOT ENOUGH MOTION ({exc})", "frames_recorded": len(frames),
+                                                       "sweep_quality": quality_record,
+                                                       "statuses": {**REFUSED_STATUSES, "geometry_support": "NONE (not enough motion)"}},
+                                                      indent=2), encoding="utf-8")
+        raise
     summary = summarize(res)
     if segments_info:
         summary["segments"] = segments_info
@@ -82,6 +86,20 @@ def analyse(frames: list[np.ndarray], out: Path, simulated: object = None) -> di
     export_ply(res.points, str(out / "scan.ply"))
     (out / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     return summary
+
+
+def _reconstruct_real(frames: list[np.ndarray], k: object, base: float, segments_info: list[dict[str, object]]) -> ScanResult:
+    from eczis.lab.scan3d import reconstruct, reconstruct_segments
+
+    segs = reconstruct_segments(frames, k, base)  # type: ignore[arg-type]
+    if not segs:
+        return reconstruct(frames, k, base, init_gap=None)  # type: ignore[arg-type]  # raises NotEnoughMotion with advice
+    for s in segs:
+        segments_info.append({"frames": f"{s.start}-{s.end}", "placed": s.end - s.start + 1,
+                              "R": sum(p.support == "R" for p in s.result.points)})
+    return max(segs, key=lambda s: sum(p.support == "R" for p in s.result.points)).result
+
+
 
 
 def quality(frame: np.ndarray) -> tuple[str, str]:

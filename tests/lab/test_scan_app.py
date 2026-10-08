@@ -88,3 +88,22 @@ def test_live_view_keeps_updating_while_recording(win) -> None:  # type: ignore[
         QApplication.processEvents()
         time.sleep(0.05)
     assert "3D done" in win.log.toPlainText() or "Not enough" in win.log.toPlainText() or "failed" in win.log.toPlainText()
+
+
+def test_snapshot_with_zoom_saves_crop_and_remote_commands_work(win, tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from eczis.lab import coach as coach_mod
+
+    cmd = tmp_path / "command.txt"
+    win.coach = coach_mod.Coach(voice=False, state_path=tmp_path / "s.json", caption_path=tmp_path / "c.txt", command_path=cmd)
+    win.toggle_zoom()
+    win.zoom_at(100, 80)
+    win.snapshot()
+    files = sorted(p.name for p in win.session_folder.glob("snapshot_*"))
+    assert any(f.endswith("_zoom8x.png") for f in files) and any(not f.endswith("_zoom8x.png") for f in files)
+    before = len(files)
+    cmd.write_text("snapshot", encoding="utf-8")
+    win.coach_tick(False)
+    assert len(list(win.session_folder.glob("snapshot_*"))) > before
+    coach_mod.write_caption("hold still", tmp_path / "c.txt")
+    win.coach_tick(False)
+    assert "hold still" in win.caption.text()

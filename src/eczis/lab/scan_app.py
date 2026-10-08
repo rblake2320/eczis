@@ -194,10 +194,20 @@ class ScanWindow(QMainWindow):
             side.addWidget(wdg)
         side.addStretch(1)
         grid.addLayout(side, 0, 1, 3, 1)
+        self.caption = QLabel("")
+        self.caption.setWordWrap(True)
+        self.caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.caption.setStyleSheet("background:#000;color:#fff;font-size:22px;padding:10px")
+        self.caption.setVisible(False)
+        grid.addWidget(self.caption, 3, 0, 1, 2)
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
         self.log.setFixedHeight(150)
         grid.addWidget(self.log, 4, 0, 1, 2)
+        from eczis.lab.coach import Coach
+
+        self.coach = Coach(voice=False)  # captions are spoken by the agent side; this window shows them
+        self.last_guidance: tuple[str, str, str] = ("", "", "")
         self.setCentralWidget(root)
         note = "SIMULATED canal (no camera)" if simulated else "Local only: images stay on this PC (artifacts/earscan)."
         self.say(note + " Output is uncalibrated / no scale; not a diagnosis.")
@@ -237,10 +247,30 @@ class ScanWindow(QMainWindow):
         else:
             self.status.setStyleSheet("font-size:15px;font-weight:bold;padding:4px")
             exp, foc, tip = guidance(grey)
+            self.last_guidance = (exp, foc, tip)
             self.status.setText(f"Exposure {exp}  |  Focus {foc}  |  Motion {self.motion_label(grey)}  |  {tip}")
         self.live.setPixmap(pm)
+        self.coach_tick(recording_until is not None)
         if self.zoom_on and self.zoom_point is not None:
             self.render_zoom()
+
+    def coach_tick(self, recording: bool) -> None:
+        """Publish what the window sees, show the agent's caption, act on a remote button press."""
+        exp, foc, tip = self.last_guidance
+        words = self.coach.tick({"window": "scan", "exposure": exp, "focus": foc, "motion": round(getattr(self, "_motion", 0.0), 1),
+                                 "recording": recording, "zoom": self.zoom_on, "session": str(self.session_folder),
+                                 "last_folder": str(self.last_folder) if self.last_folder else "", "rec_enabled": self.rec_btn.isEnabled()}, tip)
+        self.caption.setText(words)
+        self.caption.setVisible(bool(words))
+        cmd = self.coach.poll_command()
+        if cmd == "record" and self.rec_btn.isEnabled() and not recording:
+            self.say("Remote: record")
+            self.start_countdown()
+        elif cmd == "snapshot":
+            self.say("Remote: snapshot")
+            self.snapshot()
+        elif cmd == "zoom_off" and self.zoom_on:
+            self.toggle_zoom()
 
     def motion_label(self, grey: np.ndarray) -> str:
         """Live movement readout: 3D needs the tip to move; a still probe sees no depth."""
@@ -318,6 +348,11 @@ class ScanWindow(QMainWindow):
         Image.fromarray(arr).save(path)
         self.last_folder = self.session_folder
         self.say(f"Snapshot saved: {path.name} ({arr.shape[1]}x{arr.shape[0]}, full resolution)")
+        if self.zoom_on and self.zoom_point is not None:
+            crop = self.zoom_crop(arr)
+            zpath = path.with_name(path.stem + "_zoom8x.png")
+            Image.fromarray(np.repeat(np.repeat(crop, 8, axis=0), 8, axis=1)).save(zpath)
+            self.say(f"Ultra-zoom crop saved: {zpath.name} (40x40 sensor pixels shown 8x; no added detail)")
 
     def toggle_zoom(self) -> None:
         self.zoom_on = not self.zoom_on
@@ -340,14 +375,20 @@ class ScanWindow(QMainWindow):
         img = self.frame_rgb if self.frame_rgb is not None else self.frame_grey
         if img is None:
             return
-        h, w = img.shape[:2]
-        half = 20  # 40x40 sensor pixels -> 8x magnification in a 320 px panel
+        crop = self.zoom_crop(img)
         cx, cy = int(self.zoom_point[0]), int(self.zoom_point[1])
-        x0, y0 = max(0, min(w - 2 * half, cx - half)), max(0, min(h - 2 * half, cy - half))
-        crop = img[y0 : y0 + 2 * half, x0 : x0 + 2 * half]
         self.zoom_view.setPixmap(to_pixmap(crop, ZOOM_SIDE, ZOOM_SIDE, smooth=False))
         self.zoom_note.setText(f"8x at ({cx}, {cy}). Each block is one camera pixel: digital zoom shows the "
                                "pixels larger but adds no detail the sensor did not capture.")
+
+    def zoom_crop(self, img: np.ndarray) -> np.ndarray:
+        """40x40 sensor pixels around the clicked point (8x magnification in a 320 px panel)."""
+        assert self.zoom_point is not None
+        h, w = img.shape[:2]
+        half = 20
+        cx, cy = int(self.zoom_point[0]), int(self.zoom_point[1])
+        x0, y0 = max(0, min(w - 2 * half, cx - half)), max(0, min(h - 2 * half, cy - half))
+        return np.asarray(img[y0 : y0 + 2 * half, x0 : x0 + 2 * half])
 
     def open_ply(self) -> None:
         if self.last_folder and (self.last_folder / "scan.ply").exists():
