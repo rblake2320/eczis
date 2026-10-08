@@ -68,21 +68,22 @@ async function start(){ if(stream)stream.getTracks().forEach(t=>t.stop());
 sel.onchange=()=>{deviceId=sel.value;start();};
 let linked=false; async function poll(){ try{ const r=await fetch('/caption',{cache:'no-store'}); const m=await r.json(); if(!linked){linked=true;st.textContent=st.textContent.replace(' | link lost','')+' | linked';}
    if(m.caption!==undefined&&m.caption!==lastCap){lastCap=m.caption;cap.textContent=m.caption;
-   if(voice&&m.caption){ if(m.audio&&audioOk){ playPc(m.audio,m.caption); } else sayLocal(m.caption); }}
+   if(voice&&m.caption){ vd('caption audio='+(m.audio?'yes':'no')+' unlocked='+audioOk); if(m.audio&&audioOk){ playPc(m.audio,m.caption); } else sayLocal(m.caption); } else vd('caption but voice '+(voice?'on':'OFF')+' empty='+(!m.caption)); }
    if(m.command)handle(m.command,m.args||{}); }catch(e){ if(linked){linked=false;st.textContent+=' | link lost';} } setTimeout(poll,500); }
 const pat=document.getElementById('pat'),ava=document.getElementById('ava');
 let audioOk=false;
 let curSrc=null;
-async function playPc(id,text){ try{ ac=ac||new (window.AudioContext||window.webkitAudioContext)(); if(ac.state!=='running')await ac.resume();
-  const r=await fetch('/speech/'+id+'.wav',{cache:'no-store'}); const buf=await ac.decodeAudioData(await r.arrayBuffer());
-  if(curSrc){try{curSrc.stop();}catch(e){}} const s=ac.createBufferSource(); s.buffer=buf; s.connect(ac.destination); curSrc=s; startMouth(); s.onended=()=>{stopMouth(); st.textContent=st.textContent.replace(/ [|] played.*$/,'')+' | played '+buf.duration.toFixed(1)+'s'; }; s.start(); }
- catch(e){ stopMouth(); st.textContent='pc voice failed: '+e+' - using phone voice'; sayLocal(text); } }
-function sayLocal(text){ if('speechSynthesis'in window){speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(text);u.rate=1.0;u.onstart=startMouth;u.onend=stopMouth;u.onerror=stopMouth;speechSynthesis.speak(u);} }
+async function playPc(id,text){ try{ ac=ac||new (window.AudioContext||window.webkitAudioContext)(); if(ac.state!=='running')await ac.resume(); vd('fetching ac='+ac.state);
+  const r=await fetch('/speech/'+id+'.wav',{cache:'no-store'}); const ab=await r.arrayBuffer(); vd('fetched '+ab.byteLength+'B'); const buf=await ac.decodeAudioData(ab); vd('decoded '+buf.duration.toFixed(1)+'s playing');
+  if(curSrc){try{curSrc.stop();}catch(e){}} const s=ac.createBufferSource(); s.buffer=buf; s.connect(ac.destination); curSrc=s; startMouth(); s.onended=()=>{stopMouth(); vd('played '+buf.duration.toFixed(1)+'s'); st.textContent=st.textContent.replace(/ [|] played.*$/,'')+' | played '+buf.duration.toFixed(1)+'s'; }; s.start(); }
+ catch(e){ stopMouth(); vd('FAILED '+String(e).slice(0,60)+' -> phone voice'); st.textContent='pc voice failed: '+e+' - using phone voice'; sayLocal(text); } }
+function sayLocal(text){ if('speechSynthesis'in window){speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(text);u.rate=1.0;u.onstart=()=>{startMouth();vd('phone voice speaking');};u.onend=()=>{stopMouth();vd('phone voice done');};u.onerror=e=>{stopMouth();vd('phone voice error '+e.error);};speechSynthesis.speak(u);} else vd('no speechSynthesis'); }
 function unlock(){ try{ ac=ac||new (window.AudioContext||window.webkitAudioContext)(); ac.resume(); const el=document.getElementById('spk'); el.muted=false; el.play().catch(()=>{}); audioOk=true; st.textContent=st.textContent.replace(' | tap to enable voice','')+' | voice unlocked'; }catch(e){} }
 document.addEventListener('touchend',unlock,{once:true}); document.addEventListener('click',unlock,{once:true});
 
 async function micStart(){ if(micOn)return; wantMic=true; try{ ac=ac||new (window.AudioContext||window.webkitAudioContext)(); await ac.resume(); await start(); }catch(e){st.textContent='mic denied: '+e; wantMic=false;} }
-let micDiag='mic:off';
+let micDiag='mic:off',voiceDiag='voice:idle';
+function vd(s){ voiceDiag='voice:'+s; }
 function micReport(){ try{ const lvl=(micOn&&ana)?micLevel().toFixed(3):'-'; micDiag='mic:'+(micOn?'on':'off')+' auto:'+(autoListen?'on':'off')+' tracks:'+(stream?stream.getAudioTracks().length:0)+' ac:'+(ac?ac.state:'none')+' lvl:'+lvl+' rec:'+(rec?rec.state:'none')+' MR:'+(('MediaRecorder' in window)?'yes':'no'); }catch(e){micDiag='mic:err '+e;} }
 setInterval(micReport,500);
 let pttRec=null,pttChunks=[];
@@ -120,8 +121,8 @@ function drawStripes(period,phase,orient){ pat.width=innerWidth;pat.height=inner
   for(let y=0;y<h;y++){for(let x=0;x<w;x++){const u=orient==='H'?y:x;const g=Math.round(255*(0.5+0.5*Math.cos(2*Math.PI*u/period+phase)));const i=4*(y*w+x);d[i]=g;d[i+1]=g;d[i+2]=g;d[i+3]=255;}} ctx2.putImageData(img,0,0); }
 function connect(){ poll(); }
 const c=document.createElement('canvas');
-const PAGE_VERSION='cmd-9-pcvoice'; let lastResult='';
-async function post(kind,blob){ const r=await fetch('/frame?kind='+kind,{method:'POST',body:blob,headers:{'Content-Type':'image/jpeg','X-Page':PAGE_VERSION,'X-Last':(lastResult||micDiag).slice(0,160)}}); return r.ok; }
+const PAGE_VERSION='cmd-10-voicediag'; let lastResult='';
+async function post(kind,blob){ const r=await fetch('/frame?kind='+kind,{method:'POST',body:blob,headers:{'Content-Type':'image/jpeg','X-Page':PAGE_VERSION,'X-Last':(lastResult||(micDiag+' '+voiceDiag)).slice(0,200)}}); return r.ok; }
 function frame(){ if(!sending&&v.videoWidth){sending=true;c.width=v.videoWidth;c.height=v.videoHeight;c.getContext('2d').drawImage(v,0,0);
   c.toBlob(b=>{post(0,b).catch(()=>{}).finally(()=>{sending=false;});},'image/jpeg',0.85);}
   setTimeout(frame,80); }
@@ -191,6 +192,7 @@ class PhoneCamera:
         self._want_still = False
         self._phone_cmd_mtime = 0.0
         self._page_info: dict[str, Any] = {}
+        self._speech_fetches = 0
         self._thread = threading.Thread(target=self._serve, daemon=True)
 
     # --- server -----------------------------------------------------------------
@@ -268,7 +270,8 @@ class PhoneCamera:
             kind = 1 if req.query_params.get("kind") == "1" else 0
             body = await req.body()
             self._on_frame(bytes([kind]) + body)
-            info = {"page": req.headers.get("x-page", ""), "last_command_result": req.headers.get("x-last", ""), "frames": self._frames, "t": time.time()}
+            info = {**{k: v for k, v in self._page_info.items() if k.startswith("speech") or k.startswith("last_speech")},
+                    "page": req.headers.get("x-page", ""), "last_command_result": req.headers.get("x-last", ""), "frames": self._frames, "t": time.time()}
             if info["page"] != self._page_info.get("page") or info["last_command_result"] != self._page_info.get("last_command_result"):
                 self._page_info = info
                 try:
@@ -288,9 +291,16 @@ class PhoneCamera:
                 pass
             return JSONResponse({"caption": self._current_caption(), "command": cmd, "args": args, "audio": audio})
 
-        async def speech(_: Any) -> Any:
+        async def speech(req: Any) -> Any:
             from starlette.responses import FileResponse, PlainTextResponse
 
+            self._speech_fetches += 1
+            self._page_info = {**self._page_info, "speech_fetches": self._speech_fetches, "last_speech_fetch": time.time(),
+                               "last_speech_id": str(req.path_params.get("sid", ""))}
+            try:
+                PHONE_STATUS.write_text(json.dumps(self._page_info), encoding="utf-8")
+            except OSError:
+                pass
             return FileResponse(str(SPEECH_WAV), media_type="audio/wav", headers={"Cache-Control": "no-store"}) if SPEECH_WAV.exists() else PlainTextResponse("none", status_code=404)
 
         async def avatar(req: Any) -> Any:
