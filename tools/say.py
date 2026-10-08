@@ -14,6 +14,18 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 
+def phone_linked(max_age_s: float = 6.0) -> bool:
+    """True when the phone page posted a frame within max_age_s (its report file is rewritten on change; use mtime)."""
+    import time
+
+    from eczis.lab.phone_cam import PHONE_STATUS
+
+    try:
+        return time.time() - PHONE_STATUS.stat().st_mtime < max_age_s
+    except OSError:
+        return False
+
+
 def main() -> int:
     from eczis.lab.coach import STATE, write_caption
 
@@ -21,6 +33,7 @@ def main() -> int:
     ap.add_argument("text", nargs="?", default="")
     ap.add_argument("--state", action="store_true")
     ap.add_argument("--silent", action="store_true", help="caption only, no voice")
+    ap.add_argument("--local", action="store_true", help="play on the PC speakers even when the phone is linked")
     ap.add_argument("--command", choices=["record", "snapshot", "zoom_off"], default=None, help="press a button in the live window")
     ap.add_argument("--phone", default=None, help="phone-side command: still | zoom=2 | camera=back | stripes[=period] | clear | beep | avatar=neutral|listening|thinking|smile|frown|error|wave|thumbs|think|silly|off")
     a = ap.parse_args()
@@ -61,8 +74,11 @@ def main() -> int:
         from eczis.lab.coach import play_wav_loud, render_speech
 
         wav = Path(tempfile.gettempdir()) / "eczis_say.wav"
-        render_speech(a.text, wav)
-        play_wav_loud(wav)
+        render_speech(a.text, wav)  # also publishes the wav for the phone page
+        if phone_linked() and not a.local:
+            print("(phone is the voice; PC speakers quiet)")
+        else:
+            play_wav_loud(wav)
     return 0
 
 

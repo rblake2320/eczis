@@ -40,11 +40,22 @@ def avatar(state: str) -> None:
     subprocess.run([sys.executable, str(SAY), "--silent", "", "--phone", f"avatar={state}"], capture_output=True, timeout=30)
 
 
+def claude_exe() -> str:
+    import shutil
+
+    for name in ("claude", "claude.cmd", "claude.exe"):
+        found = shutil.which(name)
+        if found:
+            return found
+    return "claude"
+
+
 def ask_claude(text: str, session: list[str]) -> str:
     """One Claude Code CLI turn, continuing the responder's own conversation; falls back to a plain echo on failure."""
-    cmd = ["claude", "-p", "--output-format", "text", "--append-system-prompt", SYSTEM, *session, text]
+    cmd = [claude_exe(), "-p", "--output-format", "text", "--append-system-prompt", SYSTEM, *session, text]
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=90, encoding="utf-8", errors="ignore")
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=90, encoding="utf-8", errors="ignore",
+                           shell=cmd[0].lower().endswith(".cmd"))
         out = (r.stdout or "").strip()
         if r.returncode == 0 and out:
             if not session:
@@ -52,6 +63,9 @@ def ask_claude(text: str, session: list[str]) -> str:
             return out.splitlines()[-1] if len(out) > 400 else out
         return "I heard you, but my reply did not come through. Say it again."
     except (OSError, subprocess.SubprocessError):
+        return "I heard you, but the model is not answering right now."
+    except Exception as exc:  # noqa: BLE001 - never let the loop die on an odd shell error
+        print("claude call failed:", exc, flush=True)
         return "I heard you, but the model is not answering right now."
 
 
@@ -63,7 +77,16 @@ def main() -> int:
     a = ap.parse_args()
     sources = {s.strip() for s in a.sources.split(",")}
     session: list[str] = []
+    spoken: list[str] = []  # the responder's own recent lines, so hearing itself through a speaker is ignored
     seen = HEARD.stat().st_size if HEARD.exists() else 0
+
+    def is_echo(said: str) -> bool:
+        words = set(said.lower().split())
+        for prev in spoken[-4:]:
+            pw = set(prev.lower().split())
+            if words and len(words & pw) / len(words) > 0.6:
+                return True
+        return False
     print(f"responder listening (wake={a.wake!r}, sources={sorted(sources)}); Ctrl+C to stop", flush=True)
     while True:
         try:
@@ -88,10 +111,14 @@ def main() -> int:
                     if not text.lower().startswith(a.wake.lower()):
                         continue
                     text = text[len(a.wake):].strip(" ,.") or "hello"
+                if is_echo(text):
+                    print(f"[{time.strftime('%H:%M:%S')}] echo ignored: {text[:60]}", flush=True)
+                    continue
                 print(f"[{time.strftime('%H:%M:%S')}] {via}: {text}", flush=True)
                 avatar("thinking")
                 reply = ask_claude(text, session)
                 print(f"    -> {reply}", flush=True)
+                spoken.append(reply)
                 say(reply, avatar="smile", dry=a.dry)
                 avatar("listening")
         elif size < seen:

@@ -37,8 +37,9 @@ PORT = 8443
 
 PAGE = """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>ECZIS phone camera</title><style>
-body{margin:0;background:#000;color:#fff;font-family:system-ui;display:flex;flex-direction:column;height:100vh}
-video{width:100%;flex:1;object-fit:contain;background:#111}
+body{margin:0;background:#000;color:#fff;font-family:system-ui;display:flex;flex-direction:column;height:100vh;height:100dvh;overflow:hidden}
+video{width:100%;max-height:52vh;flex:0 1 auto;object-fit:contain;background:#111}
+#bar{flex:0 0 auto}#bar button{min-height:48px}
 #cap{font-size:22px;padding:12px;text-align:center;min-height:1.4em;background:#000}
 #bar{display:flex;gap:8px;padding:8px}button{flex:1;font-size:18px;padding:12px;border:0;border-radius:8px;background:#2563eb;color:#fff}
 #st{font-size:13px;color:#9ca3af;text-align:center;padding:4px}</style></head><body>
@@ -46,7 +47,7 @@ video{width:100%;flex:1;object-fit:contain;background:#111}
 <audio id="spk" playsinline preload="auto"></audio>
 <img id="ava" src="/avatar/neutral.jpg" style="position:fixed;top:10px;right:10px;width:34vw;max-width:220px;border-radius:14px;box-shadow:0 2px 14px #000;z-index:8;display:block">
 <video id="v" autoplay playsinline muted></video><div id="cap"></div>
-<div id="bar"><button id="still">Still (full res)</button><button id="flip">Flip</button><button id="mute">Voice on</button><button id="mic">Mic off</button><button id="ptt" style="background:#b91c1c">Hold to talk</button></div>
+<div id="bar"><button id="still">Still (full res)</button><button id="flip">Flip</button><button id="mute">Voice on</button><button id="mic">Auto-listen off</button><button id="ptt" style="background:#b91c1c">Hold to talk</button></div>
 <select id="cam" style="font-size:16px;margin:0 8px 6px 8px;padding:8px;background:#111;color:#fff;border:1px solid #444"></select>
 <div id="st">connecting...</div>
 <script>
@@ -61,7 +62,7 @@ let wantMic=true;  // one permission prompt covers camera and microphone
 async function start(){ if(stream)stream.getTracks().forEach(t=>t.stop());
  const cons=deviceId?{deviceId:{exact:deviceId},width:{ideal:1920},height:{ideal:1080}}:{facingMode:facing,width:{ideal:1920},height:{ideal:1080}};
  stream=await navigator.mediaDevices.getUserMedia({video:cons,audio:wantMic?{echoCancellation:true,noiseSuppression:true}:false});
- if(wantMic&&stream.getAudioTracks().length){ micStream=new MediaStream(stream.getAudioTracks()); ac=ac||new (window.AudioContext||window.webkitAudioContext)(); const src=ac.createMediaStreamSource(micStream); ana=ac.createAnalyser(); ana.fftSize=512; src.connect(ana); if(!micOn){micOn=true;document.getElementById('mic').textContent='Mic on';loopMic();} }
+ if(wantMic&&stream.getAudioTracks().length){ micStream=new MediaStream(stream.getAudioTracks()); ac=ac||new (window.AudioContext||window.webkitAudioContext)(); const src=ac.createMediaStreamSource(micStream); ana=ac.createAnalyser(); ana.fftSize=512; src.connect(ana); if(!micOn){micOn=true;} if(autoListen)loopMic(); }
  v.srcObject=stream; await listCams(); const tr=stream.getVideoTracks()[0]; const s=tr.getSettings();
  st.textContent=`camera ${s.width}x${s.height} ${tr.label}`; tr.onmute=()=>{st.textContent='camera paused by iOS (lens switch?) - restarting';setTimeout(start,500);}; }
 sel.onchange=()=>{deviceId=sel.value;start();};
@@ -77,7 +78,7 @@ document.addEventListener('touchend',unlock,{once:true}); document.addEventListe
 
 async function micStart(){ if(micOn)return; wantMic=true; try{ ac=ac||new (window.AudioContext||window.webkitAudioContext)(); await ac.resume(); await start(); }catch(e){st.textContent='mic denied: '+e; wantMic=false;} }
 let micDiag='mic:off';
-function micReport(){ try{ const lvl=(micOn&&ana)?micLevel().toFixed(3):'-'; micDiag='mic:'+(micOn?'on':'off')+' tracks:'+(stream?stream.getAudioTracks().length:0)+' ac:'+(ac?ac.state:'none')+' lvl:'+lvl+' rec:'+(rec?rec.state:'none')+' MR:'+(('MediaRecorder' in window)?'yes':'no'); }catch(e){micDiag='mic:err '+e;} }
+function micReport(){ try{ const lvl=(micOn&&ana)?micLevel().toFixed(3):'-'; micDiag='mic:'+(micOn?'on':'off')+' auto:'+(autoListen?'on':'off')+' tracks:'+(stream?stream.getAudioTracks().length:0)+' ac:'+(ac?ac.state:'none')+' lvl:'+lvl+' rec:'+(rec?rec.state:'none')+' MR:'+(('MediaRecorder' in window)?'yes':'no'); }catch(e){micDiag='mic:err '+e;} }
 setInterval(micReport,500);
 let pttRec=null,pttChunks=[];
 const ptt=document.getElementById('ptt');
@@ -87,12 +88,13 @@ ptt.addEventListener('touchstart',pttStart,{passive:false}); ptt.addEventListene
 ptt.addEventListener('mousedown',pttStart); ptt.addEventListener('mouseup',pttStop);
 function micLevel(){ const d=new Uint8Array(ana.fftSize); ana.getByteTimeDomainData(d); let s=0; for(const v of d){const x=(v-128)/128; s+=x*x;} return Math.sqrt(s/d.length); }
 let talking=false,quietN=0,chunks=[];
-function loopMic(){ if(!micOn)return; if(ac&&ac.state!=='running'){ac.resume().catch(()=>{});} const lvl=micLevel(); if(lvl>0.02&&!talking&&!mouthTimer){ talking=true;quietN=0;chunks=[]; try{ rec=new MediaRecorder(micStream); rec.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);}; rec.onstop=sendChunk; recStart=Date.now(); rec.start(); }catch(e){st.textContent='recorder: '+e;talking=false;} }
+function loopMic(){ if(!micOn||!autoListen)return; if(ac&&ac.state!=='running'){ac.resume().catch(()=>{});} const lvl=micLevel(); if(lvl>0.02&&!talking&&!mouthTimer){ talking=true;quietN=0;chunks=[]; try{ rec=new MediaRecorder(micStream); rec.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);}; rec.onstop=sendChunk; recStart=Date.now(); rec.start(); }catch(e){st.textContent='recorder: '+e;talking=false;} }
   else if(talking){ if(lvl<0.012)quietN++; else quietN=0; if(quietN>=12||(rec&&rec.state==='recording'&&chunksSec()>12)){ talking=false; try{rec.stop();}catch(e){} } }
   setTimeout(loopMic,80); }
 let recStart=0; function chunksSec(){return (Date.now()-recStart)/1000;}
 async function sendChunk(){ const blob=new Blob(chunks,{type:rec.mimeType||'audio/mp4'}); if(blob.size<2000)return; try{ await fetch('/hear',{method:'POST',body:blob,headers:{'Content-Type':blob.type}}); st.textContent='sent '+Math.round(blob.size/1024)+' kB of speech'; }catch(e){st.textContent='hear failed: '+e;} }
-document.getElementById('mic').onclick=()=>{ if(micOn){micOn=false;wantMic=false;document.getElementById('mic').textContent='Mic off';start();} else micStart(); };
+let autoListen=false;
+document.getElementById('mic').onclick=async()=>{ autoListen=!autoListen; document.getElementById('mic').textContent=autoListen?'Auto-listen on':'Auto-listen off'; if(autoListen){ if(!micOn)await micStart(); ac&&ac.resume(); loopMic(); } };
 let avaState='neutral',mouthTimer=null,blinkTimer=null;
 function showFrame(n){ava.src='/avatar/'+n+'.jpg';}
 function setAvatar(s){ avaState=s; if(!mouthTimer)showFrame(s); lastResult='avatar:'+s; }
@@ -113,7 +115,7 @@ function drawStripes(period,phase,orient){ pat.width=innerWidth;pat.height=inner
   for(let y=0;y<h;y++){for(let x=0;x<w;x++){const u=orient==='H'?y:x;const g=Math.round(255*(0.5+0.5*Math.cos(2*Math.PI*u/period+phase)));const i=4*(y*w+x);d[i]=g;d[i+1]=g;d[i+2]=g;d[i+3]=255;}} ctx2.putImageData(img,0,0); }
 function connect(){ poll(); }
 const c=document.createElement('canvas');
-const PAGE_VERSION='cmd-7-onemic'; let lastResult='';
+const PAGE_VERSION='cmd-8-layout'; let lastResult='';
 async function post(kind,blob){ const r=await fetch('/frame?kind='+kind,{method:'POST',body:blob,headers:{'Content-Type':'image/jpeg','X-Page':PAGE_VERSION,'X-Last':(lastResult||micDiag).slice(0,160)}}); return r.ok; }
 function frame(){ if(!sending&&v.videoWidth){sending=true;c.width=v.videoWidth;c.height=v.videoHeight;c.getContext('2d').drawImage(v,0,0);
   c.toBlob(b=>{post(0,b).catch(()=>{}).finally(()=>{sending=false;});},'image/jpeg',0.85);}
