@@ -68,10 +68,15 @@ async function start(){ if(stream)stream.getTracks().forEach(t=>t.stop());
 sel.onchange=()=>{deviceId=sel.value;start();};
 let linked=false; async function poll(){ try{ const r=await fetch('/caption',{cache:'no-store'}); const m=await r.json(); if(!linked){linked=true;st.textContent=st.textContent.replace(' | link lost','')+' | linked';}
    if(m.caption!==undefined&&m.caption!==lastCap){lastCap=m.caption;cap.textContent=m.caption;
-   if(voice&&m.caption){ if(m.audio&&audioOk){ const el=document.getElementById('spk'); el.src='/speech/'+m.audio+'.wav'; el.onplay=startMouth; el.onended=stopMouth; el.onerror=()=>{stopMouth();sayLocal(m.caption);}; el.play().catch(()=>sayLocal(m.caption)); } else sayLocal(m.caption); }}
+   if(voice&&m.caption){ if(m.audio&&audioOk){ playPc(m.audio,m.caption); } else sayLocal(m.caption); }}
    if(m.command)handle(m.command,m.args||{}); }catch(e){ if(linked){linked=false;st.textContent+=' | link lost';} } setTimeout(poll,500); }
 const pat=document.getElementById('pat'),ava=document.getElementById('ava');
 let audioOk=false;
+let curSrc=null;
+async function playPc(id,text){ try{ ac=ac||new (window.AudioContext||window.webkitAudioContext)(); if(ac.state!=='running')await ac.resume();
+  const r=await fetch('/speech/'+id+'.wav',{cache:'no-store'}); const buf=await ac.decodeAudioData(await r.arrayBuffer());
+  if(curSrc){try{curSrc.stop();}catch(e){}} const s=ac.createBufferSource(); s.buffer=buf; s.connect(ac.destination); curSrc=s; startMouth(); s.onended=()=>{stopMouth(); st.textContent=st.textContent.replace(/ [|] played.*$/,'')+' | played '+buf.duration.toFixed(1)+'s'; }; s.start(); }
+ catch(e){ stopMouth(); st.textContent='pc voice failed: '+e+' - using phone voice'; sayLocal(text); } }
 function sayLocal(text){ if('speechSynthesis'in window){speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(text);u.rate=1.0;u.onstart=startMouth;u.onend=stopMouth;u.onerror=stopMouth;speechSynthesis.speak(u);} }
 function unlock(){ try{ ac=ac||new (window.AudioContext||window.webkitAudioContext)(); ac.resume(); const el=document.getElementById('spk'); el.muted=false; el.play().catch(()=>{}); audioOk=true; st.textContent=st.textContent.replace(' | tap to enable voice','')+' | voice unlocked'; }catch(e){} }
 document.addEventListener('touchend',unlock,{once:true}); document.addEventListener('click',unlock,{once:true});
@@ -115,7 +120,7 @@ function drawStripes(period,phase,orient){ pat.width=innerWidth;pat.height=inner
   for(let y=0;y<h;y++){for(let x=0;x<w;x++){const u=orient==='H'?y:x;const g=Math.round(255*(0.5+0.5*Math.cos(2*Math.PI*u/period+phase)));const i=4*(y*w+x);d[i]=g;d[i+1]=g;d[i+2]=g;d[i+3]=255;}} ctx2.putImageData(img,0,0); }
 function connect(){ poll(); }
 const c=document.createElement('canvas');
-const PAGE_VERSION='cmd-8-layout'; let lastResult='';
+const PAGE_VERSION='cmd-9-pcvoice'; let lastResult='';
 async function post(kind,blob){ const r=await fetch('/frame?kind='+kind,{method:'POST',body:blob,headers:{'Content-Type':'image/jpeg','X-Page':PAGE_VERSION,'X-Last':(lastResult||micDiag).slice(0,160)}}); return r.ok; }
 function frame(){ if(!sending&&v.videoWidth){sending=true;c.width=v.videoWidth;c.height=v.videoHeight;c.getContext('2d').drawImage(v,0,0);
   c.toBlob(b=>{post(0,b).catch(()=>{}).finally(()=>{sending=false;});},'image/jpeg',0.85);}

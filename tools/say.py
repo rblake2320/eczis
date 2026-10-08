@@ -66,19 +66,22 @@ def main() -> int:
     if a.state or not a.text:
         print(json.dumps(json.loads(STATE.read_text(encoding="utf-8")), indent=1) if STATE.exists() else "no window state yet")
         return 0
-    write_caption(a.text)
+    if a.silent:
+        write_caption(a.text)
+        print(f"caption: {a.text}", flush=True)
+        return 0
+    import tempfile
+
+    from eczis.lab.coach import play_wav_loud, render_speech
+
+    wav = Path(tempfile.gettempdir()) / "eczis_say.wav"
+    render_speech(a.text, wav)  # publishes speech_last.wav for the phone page first ...
+    write_caption(a.text)  # ... then the caption, so the page pairs the text with its own audio
     print(f"caption: {a.text}", flush=True)
-    if not a.silent:
-        import tempfile
-
-        from eczis.lab.coach import play_wav_loud, render_speech
-
-        wav = Path(tempfile.gettempdir()) / "eczis_say.wav"
-        render_speech(a.text, wav)  # also publishes the wav for the phone page
-        if phone_linked() and not a.local:
-            print("(phone is the voice; PC speakers quiet)")
-        else:
-            play_wav_loud(wav)
+    if phone_linked() and not a.local:
+        print("(phone is the voice; PC speakers quiet)")
+    else:
+        play_wav_loud(wav)
     return 0
 
 
