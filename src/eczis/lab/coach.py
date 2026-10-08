@@ -38,11 +38,66 @@ _pending: list[str] = []  # at most one queued utterance: the newest replaces ol
 TARGET_RMS = 0.22  # loudness of spoken lines (a 0.4-amplitude test tone is ~0.28); SAPI output is far quieter by default
 
 
+ELEVEN_VOICE = os.environ.get("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")  # ElevenLabs premade "Rachel" unless overridden
+ELEVEN_MODEL = os.environ.get("ELEVENLABS_MODEL", "eleven_turbo_v2_5")
+SPEECH_WAV = CHANNEL / "speech_last.wav"  # the latest rendered line, served to the phone page as well
+
+
+def eleven_key() -> str:
+    """ELEVENLABS_API_KEY from the environment or the private brain/.env; never printed or logged."""
+    k = os.environ.get("ELEVENLABS_API_KEY", "")
+    if k:
+        return k
+    env = Path.home() / "brain" / ".env"
+    try:
+        for line in env.read_text(encoding="utf-8").splitlines():
+            if line.startswith("ELEVENLABS_API_KEY="):
+                return line.split("=", 1)[1].strip().strip('"')
+    except OSError:
+        pass
+    return ""
+
+
+def render_eleven(text: str, path: Path) -> bool:
+    """Render with ElevenLabs (PCM 22.05 kHz -> wav). Only the coach line text leaves the machine; never images or data."""
+    import urllib.request
+    import wave
+
+    key = eleven_key()
+    if not key:
+        return False
+    body = json.dumps({"text": text, "model_id": ELEVEN_MODEL, "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}}).encode()
+    req = urllib.request.Request(f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVEN_VOICE}?output_format=pcm_22050", data=body,
+                                 headers={"xi-api-key": key, "Content-Type": "application/json", "Accept": "audio/pcm"})
+    try:
+        pcm = urllib.request.urlopen(req, timeout=20).read()
+    except Exception:  # noqa: BLE001 - network/API failure falls back to the local voice
+        return False
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(22050)
+        w.writeframes(pcm)
+    return True
+
+
 def render_speech(text: str, path: Path) -> None:
+    if render_eleven(text, path):
+        try:
+            SPEECH_WAV.parent.mkdir(parents=True, exist_ok=True)
+            SPEECH_WAV.write_bytes(path.read_bytes())
+        except OSError:
+            pass
+        return
     safe = text.replace("'", "")
     subprocess.run(["powershell.exe", "-NoProfile", "-Command",
                     "Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
                     f"$s.SetOutputToWaveFile('{path}'); $s.Rate = 0; $s.Speak('{safe}'); $s.Dispose()"], capture_output=True, timeout=30)
+    try:
+        SPEECH_WAV.parent.mkdir(parents=True, exist_ok=True)
+        SPEECH_WAV.write_bytes(path.read_bytes())
+    except OSError:
+        pass
 
 
 SPEAKING = CHANNEL / "speaking"  # exists while the coach is talking, so the listener ignores the echo

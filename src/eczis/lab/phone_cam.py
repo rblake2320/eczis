@@ -17,6 +17,7 @@ full-resolution photo through the same channel and it lands as a snapshot. EXPER
 """
 from __future__ import annotations
 
+import json
 import socket
 import threading
 import time
@@ -27,6 +28,10 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[3]
 CERT_DIR = ROOT / "artifacts" / "phone_cam"
+PHONE_COMMAND = ROOT / "artifacts" / "coach" / "phone_command.json"
+PHONE_STATUS = ROOT / "artifacts" / "coach" / "phone_status.json"  # what the page reports back: version, last command result
+AVATAR_DIR = ROOT / "artifacts" / "phone_cam" / "avatar"  # downscaled face frames (operator-owned art, not committed)
+SPEECH_WAV = ROOT / "artifacts" / "coach" / "speech_last.wav"  # latest coach line rendered on the PC, played by the phone too
 PORT = 8443
 
 PAGE = """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -36,6 +41,9 @@ video{width:100%;flex:1;object-fit:contain;background:#111}
 #cap{font-size:22px;padding:12px;text-align:center;min-height:1.4em;background:#000}
 #bar{display:flex;gap:8px;padding:8px}button{flex:1;font-size:18px;padding:12px;border:0;border-radius:8px;background:#2563eb;color:#fff}
 #st{font-size:13px;color:#9ca3af;text-align:center;padding:4px}</style></head><body>
+<canvas id="pat" style="display:none;position:fixed;inset:0;z-index:9"></canvas>
+<audio id="spk" playsinline preload="auto"></audio>
+<img id="ava" src="/avatar/neutral.jpg" style="position:fixed;top:10px;right:10px;width:34vw;max-width:220px;border-radius:14px;box-shadow:0 2px 14px #000;z-index:8;display:block">
 <video id="v" autoplay playsinline muted></video><div id="cap"></div>
 <div id="bar"><button id="still">Still (full res)</button><button id="flip">Flip</button><button id="mute">Voice on</button></div>
 <select id="cam" style="font-size:16px;margin:0 8px 6px 8px;padding:8px;background:#111;color:#fff;border:1px solid #444"></select>
@@ -56,11 +64,35 @@ async function start(){ if(stream)stream.getTracks().forEach(t=>t.stop());
 sel.onchange=()=>{deviceId=sel.value;start();};
 let linked=false; async function poll(){ try{ const r=await fetch('/caption',{cache:'no-store'}); const m=await r.json(); if(!linked){linked=true;st.textContent=st.textContent.replace(' | link lost','')+' | linked';}
    if(m.caption!==undefined&&m.caption!==lastCap){lastCap=m.caption;cap.textContent=m.caption;
-   if(voice&&m.caption&&'speechSynthesis'in window){speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(m.caption);u.rate=1.0;speechSynthesis.speak(u);}}
-   if(m.command==='still')sendStill(); }catch(e){ if(linked){linked=false;st.textContent+=' | link lost';} } setTimeout(poll,500); }
+   if(voice&&m.caption){ if(m.audio&&audioOk){ const el=document.getElementById('spk'); el.src='/speech/'+m.audio+'.wav'; el.onplay=startMouth; el.onended=stopMouth; el.onerror=()=>{stopMouth();sayLocal(m.caption);}; el.play().catch(()=>sayLocal(m.caption)); } else sayLocal(m.caption); }}
+   if(m.command)handle(m.command,m.args||{}); }catch(e){ if(linked){linked=false;st.textContent+=' | link lost';} } setTimeout(poll,500); }
+const pat=document.getElementById('pat'),ava=document.getElementById('ava');
+let audioOk=false,ac=null;
+function sayLocal(text){ if('speechSynthesis'in window){speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(text);u.rate=1.0;u.onstart=startMouth;u.onend=stopMouth;u.onerror=stopMouth;speechSynthesis.speak(u);} }
+function unlock(){ try{ ac=ac||new (window.AudioContext||window.webkitAudioContext)(); ac.resume(); const el=document.getElementById('spk'); el.muted=false; el.play().catch(()=>{}); audioOk=true; st.textContent=st.textContent.replace(' | tap to enable voice','')+' | voice unlocked'; }catch(e){} }
+document.addEventListener('touchend',unlock,{once:true}); document.addEventListener('click',unlock,{once:true});
+let avaState='neutral',mouthTimer=null,blinkTimer=null;
+function showFrame(n){ava.src='/avatar/'+n+'.jpg';}
+function setAvatar(s){ avaState=s; if(!mouthTimer)showFrame(s); lastResult='avatar:'+s; }
+function startMouth(){ if(mouthTimer)return; const fr=['speak-small','speak-mid','speak-wide','speak-mid']; let i=0; mouthTimer=setInterval(()=>{showFrame(fr[i++%fr.length]);},140); }
+function stopMouth(){ if(mouthTimer){clearInterval(mouthTimer);mouthTimer=null;} showFrame(avaState); }
+blinkTimer=setInterval(()=>{ if(!mouthTimer&&avaState==='neutral'){showFrame('blink');setTimeout(()=>{if(!mouthTimer)showFrame(avaState);},160);} },4500+Math.random()*2000);
+async function handle(cmd,a){ lastResult=cmd+':start'; try{
+  if(cmd==='still')sendStill();
+  else if(cmd==='zoom'){const tr=stream.getVideoTracks()[0];const cap=tr.getCapabilities?tr.getCapabilities():{};
+    if(cap.zoom){const z=Math.min(cap.zoom.max,Math.max(cap.zoom.min,a.value||1));await tr.applyConstraints({advanced:[{zoom:z}]});st.textContent='zoom '+z+'x';lastResult='zoom:ok '+z;}else{st.textContent='zoom not supported here';lastResult='zoom:unsupported caps='+Object.keys(cap).join(',');}}
+  else if(cmd==='camera'){const o=[...sel.options].find(o=>o.textContent.toLowerCase().includes((a.name||'back').toLowerCase()));if(o){deviceId=o.value;sel.value=deviceId;start();}}
+  else if(cmd==='stripes'){pat.style.display='block';drawStripes(a.period||60,a.phase||0,a.orient||'V');lastResult='stripes:shown '+pat.width+'x'+pat.height;}
+  else if(cmd==='clear'){pat.style.display='none';lastResult='clear:ok';}
+  else if(cmd==='avatar'){ if(a.state==='off'){ava.style.display='none';lastResult='avatar:off';} else {ava.style.display='block';setAvatar(a.state||'neutral');} }
+  else if(cmd==='beep'){ac=ac||new (window.AudioContext||window.webkitAudioContext)();const o=ac.createOscillator();o.frequency.value=880;o.connect(ac.destination);o.start();setTimeout(()=>o.stop(),250);lastResult='beep:'+ac.state;}
+ }catch(e){st.textContent='command failed: '+e;lastResult=cmd+':error '+e} }
+function drawStripes(period,phase,orient){ pat.width=innerWidth;pat.height=innerHeight;const ctx2=pat.getContext('2d'),w=pat.width,h=pat.height,img=ctx2.createImageData(w,h),d=img.data;
+  for(let y=0;y<h;y++){for(let x=0;x<w;x++){const u=orient==='H'?y:x;const g=Math.round(255*(0.5+0.5*Math.cos(2*Math.PI*u/period+phase)));const i=4*(y*w+x);d[i]=g;d[i+1]=g;d[i+2]=g;d[i+3]=255;}} ctx2.putImageData(img,0,0); }
 function connect(){ poll(); }
 const c=document.createElement('canvas');
-async function post(kind,blob){ const r=await fetch('/frame?kind='+kind,{method:'POST',body:blob,headers:{'Content-Type':'image/jpeg'}}); return r.ok; }
+const PAGE_VERSION='cmd-2'; let lastResult='';
+async function post(kind,blob){ const r=await fetch('/frame?kind='+kind,{method:'POST',body:blob,headers:{'Content-Type':'image/jpeg','X-Page':PAGE_VERSION,'X-Last':lastResult.slice(0,120)}}); return r.ok; }
 function frame(){ if(!sending&&v.videoWidth){sending=true;c.width=v.videoWidth;c.height=v.videoHeight;c.getContext('2d').drawImage(v,0,0);
   c.toBlob(b=>{post(0,b).catch(()=>{}).finally(()=>{sending=false;});},'image/jpeg',0.85);}
   setTimeout(frame,80); }
@@ -128,6 +160,8 @@ class PhoneCamera:
         self._frames = 0
         self.caption_path = caption_path
         self._want_still = False
+        self._phone_cmd_mtime = 0.0
+        self._page_info: dict[str, Any] = {}
         self._thread = threading.Thread(target=self._serve, daemon=True)
 
     # --- server -----------------------------------------------------------------
@@ -142,22 +176,64 @@ class PhoneCamera:
         from starlette.routing import Route
 
         async def page(_: Any) -> HTMLResponse:
-            return HTMLResponse(PAGE)
+            return HTMLResponse(PAGE, headers={"Cache-Control": "no-store, max-age=0", "Pragma": "no-cache"})
 
         async def frame(req: Any) -> JSONResponse:
             kind = 1 if req.query_params.get("kind") == "1" else 0
             body = await req.body()
             self._on_frame(bytes([kind]) + body)
+            info = {"page": req.headers.get("x-page", ""), "last_command_result": req.headers.get("x-last", ""), "frames": self._frames, "t": time.time()}
+            if info["page"] != self._page_info.get("page") or info["last_command_result"] != self._page_info.get("last_command_result"):
+                self._page_info = info
+                try:
+                    PHONE_STATUS.write_text(json.dumps(info), encoding="utf-8")
+                except OSError:
+                    pass
             return JSONResponse({"ok": True, "n": self._frames})
 
         async def caption(_: Any) -> JSONResponse:
-            cmd = "still" if self._want_still else ""
+            cmd, args = ("still", {}) if self._want_still else self._pending_phone_command()
             self._want_still = False
-            return JSONResponse({"caption": self._current_caption(), "command": cmd})
+            audio = ""
+            try:
+                if SPEECH_WAV.exists():
+                    audio = str(int(SPEECH_WAV.stat().st_mtime * 1000))
+            except OSError:
+                pass
+            return JSONResponse({"caption": self._current_caption(), "command": cmd, "args": args, "audio": audio})
+
+        async def speech(_: Any) -> Any:
+            from starlette.responses import FileResponse, PlainTextResponse
+
+            return FileResponse(str(SPEECH_WAV), media_type="audio/wav", headers={"Cache-Control": "no-store"}) if SPEECH_WAV.exists() else PlainTextResponse("none", status_code=404)
+
+        async def avatar(req: Any) -> Any:
+            from starlette.responses import FileResponse, PlainTextResponse
+
+            name = str(req.path_params.get("name", "")).replace("/", "").replace("\\", "")
+            f = AVATAR_DIR / name
+            return FileResponse(str(f)) if f.exists() and f.suffix == ".jpg" else PlainTextResponse("no such frame", status_code=404)
 
         crt, key = ensure_cert()
-        app = Starlette(routes=[Route("/", page), Route("/frame", frame, methods=["POST"]), Route("/caption", caption)])
+        app = Starlette(routes=[Route("/", page), Route("/frame", frame, methods=["POST"]), Route("/caption", caption),
+                                Route("/avatar/{name}", avatar), Route("/speech/{sid}", speech)])
         uvicorn.run(app, host="0.0.0.0", port=self.port, ssl_certfile=str(crt), ssl_keyfile=str(key), log_level="warning")  # noqa: S104 - LAN page by design
+
+    def _pending_phone_command(self) -> tuple[str, dict[str, Any]]:
+        """A phone-side command (zoom / camera / stripes / clear / beep / still) written by tools/say.py --phone, once."""
+        p = PHONE_COMMAND
+        try:
+            m = p.stat().st_mtime
+        except OSError:
+            return "", {}
+        if m <= self._phone_cmd_mtime:
+            return "", {}
+        self._phone_cmd_mtime = m
+        try:
+            d = json.loads(p.read_text(encoding="utf-8"))
+            return str(d.get("command", "")), dict(d.get("args", {}))
+        except (OSError, ValueError):
+            return "", {}
 
     def _current_caption(self) -> str:
         p = self.caption_path

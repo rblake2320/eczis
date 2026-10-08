@@ -22,7 +22,26 @@ def main() -> int:
     ap.add_argument("--state", action="store_true")
     ap.add_argument("--silent", action="store_true", help="caption only, no voice")
     ap.add_argument("--command", choices=["record", "snapshot", "zoom_off"], default=None, help="press a button in the live window")
+    ap.add_argument("--phone", default=None, help="phone-side command: still | zoom=2 | camera=back | stripes[=period] | clear | beep | avatar=neutral|listening|thinking|smile|frown|error|wave|thumbs|think|silly|off")
     a = ap.parse_args()
+    if a.phone:
+        from eczis.lab.phone_cam import PHONE_COMMAND
+
+        name, _, val = a.phone.partition("=")
+        args: dict[str, object] = {}
+        if name == "zoom":
+            args = {"value": float(val or 2)}
+        elif name == "camera":
+            args = {"name": val or "back"}
+        elif name == "stripes":
+            args = {"period": int(val or 60), "orient": "V"}
+        elif name == "avatar":
+            args = {"state": val or "neutral"}
+        PHONE_COMMAND.parent.mkdir(parents=True, exist_ok=True)
+        PHONE_COMMAND.write_text(json.dumps({"command": name, "args": args, "t": __import__("time").time()}), encoding="utf-8")
+        print(f"phone: {name} {args}")
+        if not a.text and not a.command:
+            return 0
     if a.command:
         from eczis.lab.coach import COMMAND
 
