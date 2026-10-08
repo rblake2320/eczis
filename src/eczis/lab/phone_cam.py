@@ -46,7 +46,7 @@ video{width:100%;flex:1;object-fit:contain;background:#111}
 <audio id="spk" playsinline preload="auto"></audio>
 <img id="ava" src="/avatar/neutral.jpg" style="position:fixed;top:10px;right:10px;width:34vw;max-width:220px;border-radius:14px;box-shadow:0 2px 14px #000;z-index:8;display:block">
 <video id="v" autoplay playsinline muted></video><div id="cap"></div>
-<div id="bar"><button id="still">Still (full res)</button><button id="flip">Flip</button><button id="mute">Voice on</button><button id="mic">Mic off</button></div>
+<div id="bar"><button id="still">Still (full res)</button><button id="flip">Flip</button><button id="mute">Voice on</button><button id="mic">Mic off</button><button id="ptt" style="background:#b91c1c">Hold to talk</button></div>
 <select id="cam" style="font-size:16px;margin:0 8px 6px 8px;padding:8px;background:#111;color:#fff;border:1px solid #444"></select>
 <div id="st">connecting...</div>
 <script>
@@ -57,7 +57,7 @@ async function listCams(){ const devs=(await navigator.mediaDevices.enumerateDev
  for(const d of devs){const o=document.createElement('option');o.value=d.deviceId;o.textContent=d.label||('camera '+(sel.length+1));sel.appendChild(o);}
  const single=devs.find(d=>/^back camera$/i.test(d.label))||devs.find(d=>/back/i.test(d.label)&&!/dual|triple|wide/i.test(d.label));
  if(single&&!deviceId){deviceId=single.deviceId;sel.value=deviceId;} }
-let wantMic=false;
+let wantMic=true;  // one permission prompt covers camera and microphone
 async function start(){ if(stream)stream.getTracks().forEach(t=>t.stop());
  const cons=deviceId?{deviceId:{exact:deviceId},width:{ideal:1920},height:{ideal:1080}}:{facingMode:facing,width:{ideal:1920},height:{ideal:1080}};
  stream=await navigator.mediaDevices.getUserMedia({video:cons,audio:wantMic?{echoCancellation:true,noiseSuppression:true}:false});
@@ -75,10 +75,19 @@ function sayLocal(text){ if('speechSynthesis'in window){speechSynthesis.cancel()
 function unlock(){ try{ ac=ac||new (window.AudioContext||window.webkitAudioContext)(); ac.resume(); const el=document.getElementById('spk'); el.muted=false; el.play().catch(()=>{}); audioOk=true; st.textContent=st.textContent.replace(' | tap to enable voice','')+' | voice unlocked'; }catch(e){} }
 document.addEventListener('touchend',unlock,{once:true}); document.addEventListener('click',unlock,{once:true});
 
-async function micStart(){ if(micOn)return; wantMic=true; try{ await start(); }catch(e){st.textContent='mic denied: '+e; wantMic=false;} }
+async function micStart(){ if(micOn)return; wantMic=true; try{ ac=ac||new (window.AudioContext||window.webkitAudioContext)(); await ac.resume(); await start(); }catch(e){st.textContent='mic denied: '+e; wantMic=false;} }
+let micDiag='mic:off';
+function micReport(){ try{ const lvl=(micOn&&ana)?micLevel().toFixed(3):'-'; micDiag='mic:'+(micOn?'on':'off')+' tracks:'+(stream?stream.getAudioTracks().length:0)+' ac:'+(ac?ac.state:'none')+' lvl:'+lvl+' rec:'+(rec?rec.state:'none')+' MR:'+(('MediaRecorder' in window)?'yes':'no'); }catch(e){micDiag='mic:err '+e;} }
+setInterval(micReport,500);
+let pttRec=null,pttChunks=[];
+const ptt=document.getElementById('ptt');
+async function pttStart(ev){ ev.preventDefault(); if(!micOn){ await micStart(); } if(!micStream){st.textContent='no mic stream';return;} try{ pttChunks=[]; pttRec=new MediaRecorder(micStream); pttRec.ondataavailable=e=>{if(e.data.size)pttChunks.push(e.data);}; pttRec.onstop=async()=>{ const blob=new Blob(pttChunks,{type:pttRec.mimeType||'audio/mp4'}); st.textContent='sending '+Math.round(blob.size/1024)+' kB'; try{ await fetch('/hear',{method:'POST',body:blob,headers:{'Content-Type':blob.type}}); st.textContent='sent '+Math.round(blob.size/1024)+' kB of speech'; }catch(e){st.textContent='hear failed: '+e;} }; pttRec.start(); ptt.style.background='#15803d'; ptt.textContent='Talking... release to send'; }catch(e){st.textContent='recorder: '+e;} }
+function pttStop(ev){ if(ev)ev.preventDefault(); if(pttRec&&pttRec.state==='recording'){pttRec.stop();} ptt.style.background='#b91c1c'; ptt.textContent='Hold to talk'; }
+ptt.addEventListener('touchstart',pttStart,{passive:false}); ptt.addEventListener('touchend',pttStop,{passive:false}); ptt.addEventListener('touchcancel',pttStop,{passive:false});
+ptt.addEventListener('mousedown',pttStart); ptt.addEventListener('mouseup',pttStop);
 function micLevel(){ const d=new Uint8Array(ana.fftSize); ana.getByteTimeDomainData(d); let s=0; for(const v of d){const x=(v-128)/128; s+=x*x;} return Math.sqrt(s/d.length); }
 let talking=false,quietN=0,chunks=[];
-function loopMic(){ if(!micOn)return; const lvl=micLevel(); if(lvl>0.02&&!talking&&!mouthTimer){ talking=true;quietN=0;chunks=[]; try{ rec=new MediaRecorder(micStream); rec.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);}; rec.onstop=sendChunk; recStart=Date.now(); rec.start(); }catch(e){st.textContent='recorder: '+e;talking=false;} }
+function loopMic(){ if(!micOn)return; if(ac&&ac.state!=='running'){ac.resume().catch(()=>{});} const lvl=micLevel(); if(lvl>0.02&&!talking&&!mouthTimer){ talking=true;quietN=0;chunks=[]; try{ rec=new MediaRecorder(micStream); rec.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);}; rec.onstop=sendChunk; recStart=Date.now(); rec.start(); }catch(e){st.textContent='recorder: '+e;talking=false;} }
   else if(talking){ if(lvl<0.012)quietN++; else quietN=0; if(quietN>=12||(rec&&rec.state==='recording'&&chunksSec()>12)){ talking=false; try{rec.stop();}catch(e){} } }
   setTimeout(loopMic,80); }
 let recStart=0; function chunksSec(){return (Date.now()-recStart)/1000;}
@@ -90,7 +99,7 @@ function setAvatar(s){ avaState=s; if(!mouthTimer)showFrame(s); lastResult='avat
 function startMouth(){ if(mouthTimer)return; const fr=['speak-small','speak-mid','speak-wide','speak-mid']; let i=0; mouthTimer=setInterval(()=>{showFrame(fr[i++%fr.length]);},140); }
 function stopMouth(){ if(mouthTimer){clearInterval(mouthTimer);mouthTimer=null;} showFrame(avaState); }
 blinkTimer=setInterval(()=>{ if(!mouthTimer&&avaState==='neutral'){showFrame('blink');setTimeout(()=>{if(!mouthTimer)showFrame(avaState);},160);} },4500+Math.random()*2000);
-async function handle(cmd,a){ lastResult=cmd+':start'; try{
+async function handle(cmd,a){ lastResult=cmd+':start'; setTimeout(()=>{lastResult='';},5000); try{
   if(cmd==='still')sendStill();
   else if(cmd==='zoom'){const tr=stream.getVideoTracks()[0];const cap=tr.getCapabilities?tr.getCapabilities():{};
     if(cap.zoom){const z=Math.min(cap.zoom.max,Math.max(cap.zoom.min,a.value||1));await tr.applyConstraints({advanced:[{zoom:z}]});st.textContent='zoom '+z+'x';lastResult='zoom:ok '+z;}else{st.textContent='zoom not supported here';lastResult='zoom:unsupported caps='+Object.keys(cap).join(',');}}
@@ -104,8 +113,8 @@ function drawStripes(period,phase,orient){ pat.width=innerWidth;pat.height=inner
   for(let y=0;y<h;y++){for(let x=0;x<w;x++){const u=orient==='H'?y:x;const g=Math.round(255*(0.5+0.5*Math.cos(2*Math.PI*u/period+phase)));const i=4*(y*w+x);d[i]=g;d[i+1]=g;d[i+2]=g;d[i+3]=255;}} ctx2.putImageData(img,0,0); }
 function connect(){ poll(); }
 const c=document.createElement('canvas');
-const PAGE_VERSION='cmd-5-onestream'; let lastResult='';
-async function post(kind,blob){ const r=await fetch('/frame?kind='+kind,{method:'POST',body:blob,headers:{'Content-Type':'image/jpeg','X-Page':PAGE_VERSION,'X-Last':lastResult.slice(0,120)}}); return r.ok; }
+const PAGE_VERSION='cmd-7-onemic'; let lastResult='';
+async function post(kind,blob){ const r=await fetch('/frame?kind='+kind,{method:'POST',body:blob,headers:{'Content-Type':'image/jpeg','X-Page':PAGE_VERSION,'X-Last':(lastResult||micDiag).slice(0,160)}}); return r.ok; }
 function frame(){ if(!sending&&v.videoWidth){sending=true;c.width=v.videoWidth;c.height=v.videoHeight;c.getContext('2d').drawImage(v,0,0);
   c.toBlob(b=>{post(0,b).catch(()=>{}).finally(()=>{sending=false;});},'image/jpeg',0.85);}
   setTimeout(frame,80); }
