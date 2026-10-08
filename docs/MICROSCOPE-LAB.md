@@ -169,6 +169,15 @@ Run order (pre-registered 2026-10-07; thresholds are not changed after seeing re
 0. **Freeze the policy** `uv run python tools/freeze_policy.py` BEFORE measuring the tube or
    looking at any error. Blind-analysis control: every benchmark output records whether the
    grading files/constants/commit still match the freeze (`BLIND` / `CHANGED` / `NOT_FROZEN`).
+   Freeze log (the freeze file lives under the ignored `artifacts/`, so the digest is recorded here):
+   - 2026-10-07T13:40 — commit 0755a4f, digest `a0667b40…` — before the first physical run.
+   - 2026-10-08 ~03:10 — re-frozen at dc6ce4f, digest `7e0f2b69…`, status BLIND. **Constants identical** to
+     13:40 (no threshold moved after the 2026-10-07 refusals; 0.16 vs 0.15 was not loosened). File changes
+     since: `grade_dense.read_ply` empty-PLY guard; `phantom_benchmark` gained declared axis modes
+     (`path` | `optical` | `+fit`, cylinder refinement capped at 15°) and a declared ROI window, both added
+     after the capped-can refusal was seen. **Pre-registration:** the formal run names its axis mode and ROI
+     in the run command before the tube diameter is entered; a mode picked after seeing an error unblinds
+     that run. The 13:40 record is kept beside it as `policy_freeze.2026-10-07T1340.json`.
 1. **Print** `uv run python tools/checkerboard_print.py` at 100% (no fit-to-page). Measure the
    20 mm bar in BOTH directions and record it:
    `uv run python tools/print_record.py --printer .. --paper .. --viewer .. --scaling .. --h-mm .. --v-mm ..`
