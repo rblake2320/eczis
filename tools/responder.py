@@ -23,10 +23,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 HEARD = ROOT / "artifacts" / "coach" / "heard.jsonl"
+LATEST = ROOT / "artifacts" / "coach" / "latest.jpg"  # written ~1 Hz by the phone window
 SAY = ROOT / "tools" / "say.py"
 SYSTEM = ("You are the bench coach for a camera and 3D measurement lab, speaking through a phone with a face on screen. "
           "The operator's words reach you as speech-to-text from the phone microphone and your reply is spoken aloud, so you do "
-          "hear them and they hear you. Your reply IS spoken aloud by the phone, so never say you only send text or that you cannot "
+          "hear them and they hear you. You can also SEE: the latest live frame from the phone camera is given to you as an image "
+          "file path with each turn; read it when the operator asks what you see or when it helps. Describe only what is in the "
+          "frame. Your reply IS spoken aloud by the phone, so never say you only send text or that you cannot "
           "tell whether the voice works. Answer naturally, as in a conversation. One or two short spoken sentences, plain words, "
           "no lists, no markdown. If asked for an action you cannot do, say what you can do instead. "
           "Never claim a measurement you have not been given.")
@@ -55,7 +58,10 @@ def claude_exe() -> str:
 
 def ask_claude(text: str, session: list[str]) -> str:
     """One Claude Code CLI turn, continuing the responder's own conversation; falls back to a plain echo on failure."""
-    cmd = [claude_exe(), "-p", "--output-format", "text", "--append-system-prompt", SYSTEM, *session, text]
+    prompt = text
+    if LATEST.exists() and time.time() - LATEST.stat().st_mtime < 10:
+        prompt = (f"[The phone camera's live view right now is the image file {LATEST}. Read it first and use what it shows.] " + text)
+    cmd = [claude_exe(), "-p", "--output-format", "text", "--allowedTools", "Read", "--append-system-prompt", SYSTEM, *session, prompt]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=90, encoding="utf-8", errors="ignore",
                            shell=cmd[0].lower().endswith(".cmd"))

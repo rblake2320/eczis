@@ -33,6 +33,7 @@ PHONE_STATUS = ROOT / "artifacts" / "coach" / "phone_status.json"  # what the pa
 AVATAR_DIR = ROOT / "artifacts" / "phone_cam" / "avatar"  # downscaled face frames (operator-owned art, not committed)
 SPEECH_WAV = ROOT / "artifacts" / "coach" / "speech_last.wav"  # latest coach line rendered on the PC, played by the phone too
 CHANNEL_HEARD = ROOT / "artifacts" / "coach" / "heard.jsonl"  # same log the microphone listener appends to
+LATEST_JPG = ROOT / "artifacts" / "coach" / "latest.jpg"  # the phone's live view, refreshed ~1 Hz, for the responder
 PORT = 8443
 
 PAGE = """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -194,6 +195,7 @@ class PhoneCamera:
         self._want_still = False
         self._phone_cmd_mtime = 0.0
         self._page_info: dict[str, Any] = {}
+        self._latest_written = 0.0
         self._speech_fetches = 0
         self._thread = threading.Thread(target=self._serve, daemon=True)
 
@@ -368,6 +370,13 @@ class PhoneCamera:
                 self._grey, self._rgb, self._t = grey, rgb, time.monotonic()
                 self._size = (arr.shape[1], arr.shape[0])
                 self._frames += 1
+                if time.monotonic() - self._latest_written > 1.0:  # a 1 Hz copy of the live view for the responder/agents
+                    self._latest_written = time.monotonic()
+                    try:
+                        LATEST_JPG.parent.mkdir(parents=True, exist_ok=True)
+                        cv2.imwrite(str(LATEST_JPG), cv2.resize(arr, (arr.shape[1] // 2, arr.shape[0] // 2)))
+                    except (OSError, cv2.error):
+                        pass
 
     # --- OpenCVCamera-compatible surface -------------------------------------------
     def wait_for_frame(self, timeout: float = 30.0) -> None:
