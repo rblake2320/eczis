@@ -24,8 +24,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 HEARD = ROOT / "artifacts" / "coach" / "heard.jsonl"
 SAY = ROOT / "tools" / "say.py"
-SYSTEM = ("You are the bench coach for a camera and 3D measurement lab. Reply in one or two short spoken sentences, plain words, "
-          "no lists, no markdown. If the operator asks for an action you cannot do, say what you can do instead. "
+SYSTEM = ("You are the bench coach for a camera and 3D measurement lab, speaking through a phone with a face on screen. "
+          "The operator's words reach you as speech-to-text from the phone microphone and your reply is spoken aloud, so you do "
+          "hear them and they hear you: answer naturally, as in a conversation. One or two short spoken sentences, plain words, "
+          "no lists, no markdown. If asked for an action you cannot do, say what you can do instead. "
           "Never claim a measurement you have not been given.")
 
 
@@ -81,12 +83,11 @@ def main() -> int:
     seen = HEARD.stat().st_size if HEARD.exists() else 0
 
     def is_echo(said: str) -> bool:
-        words = set(said.lower().split())
-        for prev in spoken[-4:]:
-            pw = set(prev.lower().split())
-            if words and len(words & pw) / len(words) > 0.6:
-                return True
-        return False
+        """The responder heard itself through a speaker: the text is nearly the same as one of its recent lines."""
+        import difflib
+
+        s = said.lower().strip()
+        return any(difflib.SequenceMatcher(None, s, prev.lower().strip()).ratio() >= 0.75 for prev in spoken[-4:])
     print(f"responder listening (wake={a.wake!r}, sources={sorted(sources)}); Ctrl+C to stop", flush=True)
     while True:
         try:
