@@ -201,6 +201,11 @@ faster-whisper 1.2.1 fails with PyAV 19 (`metadata_errors`), works with 18.1.0; 
 is a .cmd shim on Windows (resolve + shell); the PC speakers echoing into the phone mic made the
 responder answer itself (phone is the voice when linked; similarity echo filter).
 
+**Phone playback verified 2026-10-08 00:08** by the page's own trace (`decoded 8.5s playing -> played 8.5s`,
+one `/speech` fetch): an ElevenLabs reply played from the iPhone speaker with the face animating. The last
+blocker was the page's Voice toggle being OFF (relabelled, PC override added), after render-before-caption
+ordering and AudioContext playback fixes.
+
 **Latency, honestly:** turn-based, ~5-10 s per exchange (clip -> Whisper -> Claude -> ElevenLabs).
 Streaming ASR + streaming TTS + barge-in would reach ~1.5 s with Claude in the loop; sub-200 ms
 full-duplex means PersonaPlex (already on Spark-1) speaking for itself with the lab behind it.
