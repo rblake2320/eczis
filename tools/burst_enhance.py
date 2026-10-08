@@ -50,9 +50,12 @@ def align(ref: np.ndarray, img: np.ndarray, iters: int = 60) -> tuple[np.ndarray
     return np.asarray(out, dtype=np.float32), float(cc), True
 
 
-def fuse(frames: list[np.ndarray], ref_idx: int, tol: float, min_cc: float = 0.6) -> dict[str, np.ndarray | int | float]:
+SATURATED = 0.98  # clipped-bright pixels carry no scene information: never evidence, whatever the agreement
+
+
+def fuse(frames: list[np.ndarray], ref_idx: int, tol: float, min_cc: float = 0.9) -> dict[str, np.ndarray | int | float]:
     ref = np.asarray(frames[ref_idx], np.float32)
-    stack, ccs = [ref], []
+    stack, ccs, rejected = [ref], [], 0
     for i, f in enumerate(frames):
         if i == ref_idx:
             continue
@@ -60,6 +63,8 @@ def fuse(frames: list[np.ndarray], ref_idx: int, tol: float, min_cc: float = 0.6
         if ok and cc >= min_cc:
             stack.append(w)
             ccs.append(cc)
+        else:
+            rejected += 1
     arr = np.stack(stack)
     mean = arr.mean(axis=0)
     agree = (np.abs(arr - mean[None]) <= tol).sum(axis=0)
@@ -67,9 +72,11 @@ def fuse(frames: list[np.ndarray], ref_idx: int, tol: float, min_cc: float = 0.6
     support = np.full(mean.shape, "U", dtype="<U1")
     support[agree >= I_FRAC * n] = "I"
     support[agree >= R_FRAC * n] = "R"
+    saturated = (arr >= SATURATED).mean(axis=0) > 0.5  # clipped in most aligned frames
+    support[saturated] = "U"
     fused = np.where(support == "U", ref, mean)
-    return {"fused": fused, "support": support, "agree": agree, "n_aligned": n, "n_total": len(frames),
-            "cc_median": float(np.median(ccs)) if ccs else 0.0, "ref": ref}
+    return {"fused": fused, "support": support, "agree": agree, "n_aligned": n, "n_total": len(frames), "n_rejected": rejected,
+            "cc_median": float(np.median(ccs)) if ccs else 0.0, "saturated_frac": float(saturated.mean()), "ref": ref}
 
 
 def deblur(img: np.ndarray, sigma: float, iters: int = 12) -> np.ndarray:
@@ -97,10 +104,11 @@ def main() -> int:
     ap.add_argument("--tol", type=float, default=0.06, help="agreement tolerance in intensity units")
     ap.add_argument("--deblur", type=float, default=0.0, help="Gaussian PSF sigma for Richardson-Lucy (0 = off)")
     ap.add_argument("--stride", type=int, default=1)
+    ap.add_argument("--min-cc", type=float, default=0.9, help="reject frames whose alignment correlation is below this")
     a = ap.parse_args()
     frames = [np.asarray(f, np.float32) for f in np.load(a.folder / "frames.npz")["frames"][:: a.stride]]
     ref_idx = a.ref if a.ref is not None else len(frames) // 2
-    res = fuse(frames, ref_idx, a.tol)
+    res = fuse(frames, ref_idx, a.tol, a.min_cc)
     out = a.folder / "enhance"
     out.mkdir(exist_ok=True)
     fused, support = res["fused"], res["support"]
@@ -117,13 +125,15 @@ def main() -> int:
     overlay = 0.6 * np.repeat(fused[..., None], 3, axis=2) + 0.4 * rgb
     Image.fromarray((np.clip(overlay, 0, 1) * 255).astype(np.uint8)).save(out / "fused_support_overlay.png")
     report: dict[str, object] = {
-        "frames": res["n_total"], "aligned": res["n_aligned"], "reference_index": ref_idx, "tol": a.tol,
+        "frames": res["n_total"], "aligned": res["n_aligned"], "rejected_low_alignment": res["n_rejected"], "min_cc": a.min_cc,
+        "saturated_fraction_forced_U": round(float(res["saturated_frac"]), 4), "reference_index": ref_idx, "tol": a.tol,
         "alignment_cc_median": round(float(res["cc_median"]), 3),
         "support_fractions": {c: round(float((support == c).mean()), 4) for c in ("R", "I", "U")},
         "noise_sd_reference": round(float(np.std(res["ref"] - fused)), 4),
         "files": {"fused": str(out / "fused.png"), "support": str(out / "support.png"), "reference": str(out / "reference.png")},
         "notes": ["fused = mean of aligned frames where R/I; the reference frame where U",
                   "support counts aligned frames agreeing with the fused value within tol: evidence, not confidence",
+                  "clipped-bright (specular) pixels are U regardless of agreement: a hotspot agreeing with itself is not evidence",
                   "no generative model; nothing drawn that the frames did not contain"],
     }
     if a.deblur > 0:

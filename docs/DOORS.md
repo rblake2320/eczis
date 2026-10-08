@@ -64,3 +64,35 @@ s.d. 0.0137 (intensity units). Fine print that is grainy in the single frame rea
 before use if ... pregnant, nursing, taking medication", "out of reach of children", "B6 (as
 pyridoxine ...)"). The same burst is REFUSED for 3D (glare 17.2 %): image clean-up and 3D have
 different gates, and the record says which applied. Operator-side artifacts stay local (gitignored).
+
+**Also measured on a moving subject (operator's own eye, 120-frame burst `20261007-220638`):**
+frame-to-frame motion median 10 px, p90 39 px; with the default acceptance only 27/120 frames
+aligned (cc >= 0.97), R 60 % / I 27 % / U 12 %. Found and fixed a flaw: the corneal LED hotspot
+is constant relative to the camera and was counting as supported; clipped-bright pixels are now
+U regardless of agreement. The tool reports frames rejected and the forced-U fraction.
+
+## DOOR-20261007-03 — Corneal reflection imaging (forensic): method works, this sensor cannot
+
+**Trigger (observed):** operator eye shots show two reflections in the cornea; question raised
+whether what the subject was looking at can be recovered ("could be major in crime labs").
+
+**Prior art:** Jenkins & Kerr 2013 (PLoS ONE) recovered identifiable bystander faces from
+corneal reflections in 39-megapixel portraits; the cornea acts as a convex mirror of radius
+~7.8 mm (focal length ~3.9 mm), so an object of size S at distance d forms an image of
+S x 3.9 / (d + 3.9) mm on the cornea.
+
+**Measured here (640x480 endoscope, calibrated fx 816 px, ~23 mm from the eye assuming an
+11.7 mm iris -> 35 px/mm at the cornea):** LED-ring highlight ~50 px; a second reflection
+~50 px across, identical colour in two shots (RGB 67/90/110), at a near-constant offset from
+the highlight. My inference from size/offset was "the probe's own tip"; the operator's ground
+truth is **the monitor, showing open terminals** (dark windows with light text -> dim
+blue-grey patch), and the white disc is the endoscope. Lesson recorded: the reflection
+geometry alone was ambiguous at this resolution and a wrong inference was stated with more
+confidence than the data allowed; ground truth from the scene must be asked for before any
+identification is claimed. Predicted corneal images
+at this camera: 27-inch monitor at 0.7 m ~116 px (a blob), a face at 0.6 m ~45 px (no identity),
+a hand at 0.4 m ~61 px. Conclusion: the analysis path (locate iris, locate highlight, crop at
+native pixels, labelled enhancement, convex-mirror geometry) is sound and cheap; recovering
+scene identity needs a sensor with roughly 10-50x the pixels on the cornea. Not novel; a
+possible ECZIS angle is the evidence labelling of such enhancements (what is supported by how
+many frames) rather than the recovery itself. Routing: roadmap note only; no claim.
