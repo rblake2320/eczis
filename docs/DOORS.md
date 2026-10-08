@@ -85,8 +85,10 @@ S x 3.9 / (d + 3.9) mm on the cornea.
 11.7 mm iris -> 35 px/mm at the cornea):** LED-ring highlight ~50 px; a second reflection
 ~50 px across, identical colour in two shots (RGB 67/90/110), at a near-constant offset from
 the highlight. My inference from size/offset was "the probe's own tip"; the operator's ground
-truth is **the monitor, showing open terminals** (dark windows with light text -> dim
-blue-grey patch), and the white disc is the endoscope. Lesson recorded: the reflection
+truth is **the monitor: an LG 45-inch curved ultrawide with a water wallpaper behind open
+terminal windows** (the water explains the teal; the windows the dark structure), and the
+white disc is the endoscope. Enlarged 8x, the reflection shows the screen's tilted rectangle
+and a brighter band, no window detail: one terminal text line is under a pixel on this sensor. Lesson recorded: the reflection
 geometry alone was ambiguous at this resolution and a wrong inference was stated with more
 confidence than the data allowed; ground truth from the scene must be asked for before any
 identification is claimed. Predicted corneal images
