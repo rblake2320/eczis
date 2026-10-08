@@ -178,3 +178,33 @@ tube, camera moving along it) does not match a short can viewed end-on with a te
    stills/RAW (custom capture app or Record3D).
 5. Policy freeze: re-freeze (with a note) before the next formal run, since grade_dense.py and
    phantom_benchmark.py changed after 13:40 (empty-cloud guard, ROI/axis options, cylinder fit).
+
+## DOOR-20261007-05 — The phone as the conversational front end (verified 2026-10-07 23:53)
+
+**Built and observed working on an iPhone over the house Wi-Fi, no app installed:** one HTTPS page
+(`eczis.lab.phone_cam`) = live camera to the PC (~8 fps 1080p, guidance grade), full-res stills, PC
+-> phone commands with result report-back (zoom 2x ok, camera select, stripe pattern on the phone
+screen, beep after a tap, still), a face overlay driven from the PC (mood-buddy frames: states,
+speaking mouth, idle blink), the PC's voice played by the phone (ElevenLabs render, 1.7 s; Windows
+voice fallback), and the phone microphone -> PC (hold-to-talk clips, or auto-listen) -> faster-whisper
+on the GPU -> the coach channel -> `tools/responder.py` (Claude Code CLI, one sentence or two) ->
+ElevenLabs -> the face. First real exchange: operator "Can you hear me?" -> "Yes, I hear you fine,
+loud and clear..." (responder.log 23:53:51). A Siri Shortcut can POST dictated text to
+`http://<pc>:8444/ask` and gets the same answer through the face (verified with curl).
+
+**Failures found and fixed on the way (all in commits tonight):** iOS Safari refuses wss on a
+self-signed cert (switched to HTTPS posts); Safari serves a cached page even on reopen (no-store +
+query-string reloads); iOS lens auto-switching broke sweeps (pin "Back Camera"); a second
+getUserMedia for audio stops the video stream (one combined stream); the audio context stays
+suspended until a tap (resume inside the gesture; hold-to-talk needs no level detection);
+faster-whisper 1.2.1 fails with PyAV 19 (`metadata_errors`), works with 18.1.0; the `claude` CLI
+is a .cmd shim on Windows (resolve + shell); the PC speakers echoing into the phone mic made the
+responder answer itself (phone is the voice when linked; similarity echo filter).
+
+**Latency, honestly:** turn-based, ~5-10 s per exchange (clip -> Whisper -> Claude -> ElevenLabs).
+Streaming ASR + streaming TTS + barge-in would reach ~1.5 s with Claude in the loop; sub-200 ms
+full-duplex means PersonaPlex (already on Spark-1) speaking for itself with the lab behind it.
+
+**Product note (operator asked about the App Store):** feasible as a native iOS client (camera
+control, ARKit depth/pose, on-device or server speech, the face) with the evidence core kept
+server-side; needs the IP filing/licensing decision first and must stay clear of medical claims.
