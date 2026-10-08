@@ -125,3 +125,13 @@ the endoscope from outside and give the probe's insertion distance from its own 
 (needs the app on the phone + USB) -> deflectometry test on the aluminium tube with phase-shifted
 stripes on the LG monitor -> corneal reflection at phone resolution. Keep compressed live video
 for guidance only; evidence comes from stills/RAW/depth.
+
+**Deflectometry, first run (observed 2026-10-07 22:38, sweep `20261007-223826`, iPhone via the
+bridge, 1080x1920, stripes from `tools/stripes.py` in a browser window on the LG monitor, not yet
+full screen):** the stripes reflect as concentric rings inside the aluminium tube (frame 100) and
+bend around its outside (frame 20). Gates passed (glare 0.01 %, dark 8 %). Local tracker: R 48
+(plain wall earlier: R 6). MASt3R on the Spark: **505,871 points, 19 keyframes** (plain matte wall
+with the calibrated endoscope: 0 points). Caveats that keep this from being a result yet: the
+sweep mixed three views (tube exterior, the screen, tube interior), so most of the cloud is the
+desk and monitor; lens UNCALIBRATED / NO_SCALE (phone); grading is the visibility grader, not the
+evidence grader. The decisive run is an interior-only sweep with the pattern full screen.
