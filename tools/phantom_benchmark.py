@@ -124,21 +124,74 @@ def local_radius(points: np.ndarray, c: np.ndarray, axis: np.ndarray, prof_z: np
     return np.asarray(np.interp(along, prof_z, prof_r), dtype=np.float64)
 
 
-def choose_axis(r_pts: np.ndarray, trajectory: Path | None) -> tuple[np.ndarray, str, dict[str, float]]:
-    """Axis direction from the camera path when given; otherwise PCA, gated on patch shape."""
+def trajectory_axis(trajectory: Path, mode: str) -> tuple[np.ndarray, np.ndarray, str, dict[str, float]]:
+    """(axis, first camera position, description, diagnostics). mode 'path' = principal direction of the camera
+    path (probe pushed along the tube); 'optical' = mean viewing direction of the keyframes (camera looking down
+    the tube while barely translating, where the path direction is noise)."""
+    from eczis.lab.grade_dense import read_tum_trajectory
+
+    poses = read_tum_trajectory(trajectory)
+    if len(poses) < 2:
+        raise SystemExit(f"{trajectory}: fewer than 2 poses; cannot take an axis from it")
+    cam = np.array([p.position for p in poses])
+    path_len = float(np.linalg.norm(cam[-1] - cam[0]))
+    if mode == "optical":
+        axes = np.array([p.rot_wc[:, 2] for p in poses])
+        axis = axes.mean(axis=0)
+        axis /= np.linalg.norm(axis)
+        spread = float(np.degrees(np.arccos(np.clip((axes @ axis).min(), -1, 1))))
+        return axis, cam[0], "camera optical axis (mean viewing direction of the keyframes)", {
+            "camera_path_units": round(path_len, 4), "viewing_direction_spread_deg": round(spread, 1)}
+    axis = principal_direction(cam)
+    if cam[-1] @ axis < cam[0] @ axis:
+        axis = -axis
+    return axis, cam[0], "camera trajectory (principal direction of the camera path)", {"camera_path_units": round(path_len, 4)}
+
+
+MAX_REFINE_DEG = 15.0  # a cylinder fit may tilt the camera-derived axis by at most this much, else it is not the same tube
+
+
+def refine_cylinder_axis(points: np.ndarray, axis0: np.ndarray) -> tuple[np.ndarray, float]:
+    """Least-squares cylinder (axis direction, in-plane centre, radius) initialised from axis0; robust loss.
+
+    Returns (axis, tilt from axis0 in degrees). Pure geometry: the residual gate downstream is unchanged.
+    """
+    from scipy.optimize import least_squares
+
+    e1, e2 = perpendicular_frame(axis0)
+    c0 = points.mean(axis=0)
+
+    def unpack(x: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]:
+        a = axis0 + x[0] * e1 + x[1] * e2
+        a = a / np.linalg.norm(a)
+        return a, c0 + x[2] * e1 + x[3] * e2, float(x[4])
+
+    def resid(x: np.ndarray) -> np.ndarray:
+        a, c, r = unpack(x)
+        return radial_distance(points, c, a) - r
+
+    r_init = float(np.median(radial_distance(points, c0, axis0)))
+    sol = least_squares(resid, x0=np.array([0.0, 0.0, 0.0, 0.0, r_init]), loss="soft_l1", f_scale=0.1 * r_init, max_nfev=200)
+    a, _, _ = unpack(sol.x)
+    tilt = float(np.degrees(np.arccos(np.clip(abs(a @ axis0), -1, 1))))
+    return a, tilt
+
+
+def choose_axis(r_pts: np.ndarray, trajectory: Path | None, axis_mode: str = "path") -> tuple[np.ndarray, str, dict[str, float]]:
+    """Axis direction from the camera when given; otherwise PCA, gated on patch shape."""
     pca = principal_direction(r_pts)
     if trajectory is not None:
-        from eczis.lab.grade_dense import read_tum_trajectory
-
-        poses = read_tum_trajectory(trajectory)
-        if len(poses) < 2:
-            raise SystemExit(f"{trajectory}: fewer than 2 poses; cannot take an axis from it")
-        cam = np.array([p.position for p in poses])
-        axis = principal_direction(cam)
-        if cam[-1] @ axis < cam[0] @ axis:
-            axis = -axis
-        return axis, "camera trajectory (principal direction of the camera path)", {
-            "cos_to_pca_axis": round(abs(float(axis @ pca)), 3), "camera_path_units": round(float(np.linalg.norm(cam[-1] - cam[0])), 4)}
+        fit = axis_mode.endswith("+fit")
+        axis, _, desc, diag = trajectory_axis(trajectory, axis_mode.replace("+fit", ""))
+        if fit:
+            sub = r_pts[np.random.default_rng(0).choice(len(r_pts), min(20000, len(r_pts)), replace=False)]
+            axis_f, tilt = refine_cylinder_axis(sub, axis)
+            diag["cylinder_fit_tilt_deg"] = round(tilt, 2)
+            if tilt > MAX_REFINE_DEG:
+                refuse(f"cylinder fit tilted the camera axis by {tilt:.1f} deg (limit {MAX_REFINE_DEG:.0f}): the R points are not the tube the camera looked down")
+            axis, desc = axis_f, desc + " refined by a least-squares cylinder fit"
+        diag["cos_to_pca_axis"] = round(abs(float(axis @ pca)), 3)
+        return axis, desc, diag
     c, r_fit, arc = fit_circle_about_axis(r_pts, pca)
     s = np.linalg.svd(r_pts - r_pts.mean(axis=0), compute_uv=False)
     resid = float(np.median(np.abs(radial_distance(r_pts, c, pca) - r_fit)) / max(r_fit, 1e-12))
@@ -154,7 +207,7 @@ def choose_axis(r_pts: np.ndarray, trajectory: Path | None) -> tuple[np.ndarray,
 
 def benchmark(ply: Path, diameter_mm: float, trajectory: Path | None, scale_mm: float | None, scale_units: float | None,
               profile: bool, slice_mm: float, axial_window: tuple[float, float] | None = None,
-              max_radius_units: float | None = None) -> dict[str, object]:
+              max_radius_units: float | None = None, axis_mode: str = "path") -> dict[str, object]:
     """axial_window / max_radius_units restrict the cloud to the phantom (cloud units along the camera axis from
     the first camera, and radial distance from it) when the sweep also saw what lies beyond the open end; the
     window is recorded in the output and is a declared region of interest, not a fit."""
@@ -168,14 +221,9 @@ def benchmark(ply: Path, diameter_mm: float, trajectory: Path | None, scale_mm: 
     if axial_window is not None or max_radius_units is not None:
         if trajectory is None:
             raise SystemExit("a region of interest needs --trajectory (the axis the window is measured along)")
-        from eczis.lab.grade_dense import read_tum_trajectory
-
-        cam = np.array([p.position for p in read_tum_trajectory(trajectory)])
-        ax = principal_direction(cam)
-        if cam[-1] @ ax < cam[0] @ ax:
-            ax = -ax
-        along_all = (xyz - cam[0]) @ ax
-        rad_all = np.linalg.norm((xyz - cam[0]) - np.outer(along_all, ax), axis=1)
+        ax, cam0, _, _ = trajectory_axis(trajectory, axis_mode.replace("+fit", ""))
+        along_all = (xyz - cam0) @ ax
+        rad_all = np.linalg.norm((xyz - cam0) - np.outer(along_all, ax), axis=1)
         keep = np.ones(len(xyz), bool)
         if axial_window is not None:
             keep &= (along_all >= axial_window[0]) & (along_all <= axial_window[1])
@@ -186,7 +234,7 @@ def benchmark(ply: Path, diameter_mm: float, trajectory: Path | None, scale_mm: 
     r_pts = xyz[cls == "R"]
     if len(r_pts) < 100:
         raise SystemExit(f"only {len(r_pts)} R points; benchmark needs a supported wall")
-    axis, axis_source, axis_diag = choose_axis(r_pts, trajectory)
+    axis, axis_source, axis_diag = choose_axis(r_pts, trajectory, axis_mode)
     c, r_fit, arc = fit_circle_about_axis(r_pts, axis)
     if arc < MIN_ARC_DEG:
         refuse(f"R wall covers only {arc:.0f} deg of the tube (need >= {MIN_ARC_DEG:.0f}); the circle fit is unstable")
@@ -255,10 +303,12 @@ def main() -> int:
     ap.add_argument("--slice-mm", type=float, default=1.0)
     ap.add_argument("--axial-window", default=None, help="keep points with axial position a:b (cloud units from the first camera)")
     ap.add_argument("--max-radius-units", type=float, default=None, help="keep points within this radial distance of the camera axis")
+    ap.add_argument("--axis-from", choices=["path", "optical", "path+fit", "optical+fit"], default="path",
+                    help="path: direction the camera moved (probe pushed along the tube); optical: mean viewing direction (looking down a short can)")
     a = ap.parse_args()
     win = tuple(float(v) for v in a.axial_window.split(":")) if a.axial_window else None
     out = benchmark(a.ply, a.diameter_mm, a.trajectory, a.scale_mm, a.scale_units, a.profile, a.slice_mm,
-                    (win[0], win[1]) if win else None, a.max_radius_units)
+                    (win[0], win[1]) if win else None, a.max_radius_units, a.axis_from)
     print(json.dumps(out, indent=2))
     Path(a.ply).with_name("phantom_benchmark.json").write_text(json.dumps(out, indent=2), encoding="utf-8")
     return 0 if out["ordering_R<I<U"] else 1

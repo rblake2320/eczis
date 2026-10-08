@@ -150,3 +150,31 @@ disc, i.e. the screen seen through the open bottom plus the desk, not the wall; 
 in the U sheets. Policy-freeze status at this point: CHANGED (grade_dense.py gained an
 empty-cloud guard after the 13:40 freeze), so any benchmark tonight is recorded UNBLINDED.
 Next: cap the far end with paper so only wall reflections remain, move along the axis.
+
+**Fourth run (observed 2026-10-07 23:07, `20261007-230658`, can standing on the printed
+checkerboard page, phone looking straight down the axis):** local tracker 104/120 frames in ONE
+segment (best of the night). MASt3R 16 keyframes; evidence grader **R 53.3 % / I 4.2 % / U 42.5 %**
+(parallax p50 5.4 deg: the camera barely translated). End-on projection of the R points along the
+cameras' optical axis shows a clear **ring** (the can wall) with the floor hole in the middle
+(`mast3r/endon_window.png`); the U points are a second, thinner ring (the double sheet). The 66 mm
+benchmark still REFUSED three ways, each honest: path axis (camera moved 0.2 units, direction is
+noise); optical axis with a declared floor-excluding window (axial 0-1.95, radius <= 1.2):
+median radial residual **0.16 vs the frozen 0.15**; optical axis + least-squares cylinder
+refinement: the fit tilted 47 deg (cap 15) because the window still held floor/desk remnants
+around the rim. Not loosened. What this run establishes: with screen-pattern illumination a
+bare aluminium interior is tracked end to end and its wall reconstructs as a ring; what it
+does not establish: a metric diameter, because the benchmark's phantom model (long straight
+tube, camera moving along it) does not match a short can viewed end-on with a textured floor.
+
+**Paused by the operator 23:12.** Blockers and the fix for each, in order:
+1. Phantom geometry vs benchmark model: either a longer slick tube (pipe offcut) with the
+   probe moving along it, or a benchmark mode for end-on cans that segments the ring by radial
+   histogram instead of an axial window (declared, tested on synthetic cans first).
+2. Texture on slick walls: proven by stripes from a screen; a probe-mounted projector (laser
+   grid cap) is the portable version. Record the projector in the capture mode.
+3. Scale and lens for the phone: Record3D (LiDAR depth + pose + intrinsics over USB), tool
+   written, unrun. Also the checkerboard visible in-scene is a metric reference to exploit.
+4. Live stream quality: 8 fps JPEG over the LAN page is guidance-grade; evidence bursts need
+   stills/RAW (custom capture app or Record3D).
+5. Policy freeze: re-freeze (with a note) before the next formal run, since grade_dense.py and
+   phantom_benchmark.py changed after 13:40 (empty-cloud guard, ROI/axis options, cylinder fit).
