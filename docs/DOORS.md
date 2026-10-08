@@ -135,3 +135,18 @@ with the calibrated endoscope: 0 points). Caveats that keep this from being a re
 sweep mixed three views (tube exterior, the screen, tube interior), so most of the cloud is the
 desk and monitor; lens UNCALIBRATED / NO_SCALE (phone); grading is the visibility grader, not the
 evidence grader. The decisive run is an interior-only sweep with the pattern full screen.
+
+**Second and third runs (observed 2026-10-07 22:43 and 22:57):** the long aluminium tube,
+interior frames only (`20261007-224325`, frames 35-85): 16,471 points from ONE keyframe ->
+all U (dark near wall, rings only at the far end). **Soda can with top and bottom cut off**
+(`20261007-225717`, phone pinned to the single back camera, stripes full screen): gates
+passed (glare 0 %, dark 4 %); MASt3R **368,821 points, 40 keyframes spanning frames 0-116**;
+evidence grader (stride 2, 1.47 M points): **R 41.7 % / I 1.3 % / U 57.0 %** (depth-conflict
+sheets 829 k, no-agreeing-view 53 k, parallax p50 16.9 deg). The frames show the stripes
+reflected as warped bands on the bare can wall: the deflectometry texture is real and the
+tracker holds on it. The 66 mm benchmark REFUSED (R radial residual 0.34 of the radius):
+the R points lie in a thin axial slab (1.97-2.2 units from the first camera) spread as a
+disc, i.e. the screen seen through the open bottom plus the desk, not the wall; the wall is
+in the U sheets. Policy-freeze status at this point: CHANGED (grade_dense.py gained an
+empty-cloud guard after the 13:40 freeze), so any benchmark tonight is recorded UNBLINDED.
+Next: cap the far end with paper so only wall reflections remain, move along the axis.

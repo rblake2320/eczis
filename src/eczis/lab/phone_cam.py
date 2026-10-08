@@ -38,13 +38,22 @@ video{width:100%;flex:1;object-fit:contain;background:#111}
 #st{font-size:13px;color:#9ca3af;text-align:center;padding:4px}</style></head><body>
 <video id="v" autoplay playsinline muted></video><div id="cap"></div>
 <div id="bar"><button id="still">Still (full res)</button><button id="flip">Flip</button><button id="mute">Voice on</button></div>
+<select id="cam" style="font-size:16px;margin:0 8px 6px 8px;padding:8px;background:#111;color:#fff;border:1px solid #444"></select>
 <div id="st">connecting...</div>
 <script>
 const st=document.getElementById('st'),cap=document.getElementById('cap'),v=document.getElementById('v');
-let facing='environment',stream,ws,voice=true,lastCap='',sending=false;
+let facing='environment',stream,ws,voice=true,lastCap='',sending=false,deviceId=null;
+const sel=document.getElementById('cam');
+async function listCams(){ const devs=(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==='videoinput'); sel.innerHTML='';
+ for(const d of devs){const o=document.createElement('option');o.value=d.deviceId;o.textContent=d.label||('camera '+(sel.length+1));sel.appendChild(o);}
+ const single=devs.find(d=>/^back camera$/i.test(d.label))||devs.find(d=>/back/i.test(d.label)&&!/dual|triple|wide/i.test(d.label));
+ if(single&&!deviceId){deviceId=single.deviceId;sel.value=deviceId;} }
 async function start(){ if(stream)stream.getTracks().forEach(t=>t.stop());
- stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:facing,width:{ideal:1920},height:{ideal:1080}},audio:false});
- v.srcObject=stream; const s=stream.getVideoTracks()[0].getSettings(); st.textContent=`camera ${s.width}x${s.height} ${facing}`; }
+ const cons=deviceId?{deviceId:{exact:deviceId},width:{ideal:1920},height:{ideal:1080}}:{facingMode:facing,width:{ideal:1920},height:{ideal:1080}};
+ stream=await navigator.mediaDevices.getUserMedia({video:cons,audio:false});
+ v.srcObject=stream; await listCams(); const tr=stream.getVideoTracks()[0]; const s=tr.getSettings();
+ st.textContent=`camera ${s.width}x${s.height} ${tr.label}`; tr.onmute=()=>{st.textContent='camera paused by iOS (lens switch?) - restarting';setTimeout(start,500);}; }
+sel.onchange=()=>{deviceId=sel.value;start();};
 let linked=false; async function poll(){ try{ const r=await fetch('/caption',{cache:'no-store'}); const m=await r.json(); if(!linked){linked=true;st.textContent=st.textContent.replace(' | link lost','')+' | linked';}
    if(m.caption!==undefined&&m.caption!==lastCap){lastCap=m.caption;cap.textContent=m.caption;
    if(voice&&m.caption&&'speechSynthesis'in window){speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(m.caption);u.rate=1.0;speechSynthesis.speak(u);}}
@@ -59,7 +68,7 @@ async function sendStill(){ try{ const tr=stream.getVideoTracks()[0]; let blob;
   if('ImageCapture'in window){ blob=await new ImageCapture(tr).takePhoto(); } else { c.width=v.videoWidth;c.height=v.videoHeight;c.getContext('2d').drawImage(v,0,0); blob=await new Promise(r=>c.toBlob(r,'image/jpeg',0.95)); }
   await post(1,blob); st.textContent='still sent '+Math.round(blob.size/1024)+' kB'; }catch(e){st.textContent='still failed: '+e} }
 document.getElementById('still').onclick=sendStill;
-document.getElementById('flip').onclick=()=>{facing=facing==='environment'?'user':'environment';start();};
+document.getElementById('flip').onclick=()=>{facing=facing==='environment'?'user':'environment';deviceId=null;start();};
 document.getElementById('mute').onclick=e=>{voice=!voice;e.target.textContent=voice?'Voice on':'Voice off';};
 start().then(()=>{connect();frame();}).catch(e=>{st.textContent='camera denied: '+e});
 </script></body></html>"""

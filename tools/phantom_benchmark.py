@@ -153,13 +153,36 @@ def choose_axis(r_pts: np.ndarray, trajectory: Path | None) -> tuple[np.ndarray,
 
 
 def benchmark(ply: Path, diameter_mm: float, trajectory: Path | None, scale_mm: float | None, scale_units: float | None,
-              profile: bool, slice_mm: float) -> dict[str, object]:
+              profile: bool, slice_mm: float, axial_window: tuple[float, float] | None = None,
+              max_radius_units: float | None = None) -> dict[str, object]:
+    """axial_window / max_radius_units restrict the cloud to the phantom (cloud units along the camera axis from
+    the first camera, and radial distance from it) when the sweep also saw what lies beyond the open end; the
+    window is recorded in the output and is a declared region of interest, not a fit."""
     from eczis.lab.grade_dense import read_ply
 
     xyz, rgb = read_ply(ply)
     if rgb is None:
         raise SystemExit("PLY has no colours; need an evidence-coloured cloud")
     cls = np.array([CLASS_RGB.get(tuple(int(v) for v in c), "U") for c in rgb])
+    roi: dict[str, object] = {}
+    if axial_window is not None or max_radius_units is not None:
+        if trajectory is None:
+            raise SystemExit("a region of interest needs --trajectory (the axis the window is measured along)")
+        from eczis.lab.grade_dense import read_tum_trajectory
+
+        cam = np.array([p.position for p in read_tum_trajectory(trajectory)])
+        ax = principal_direction(cam)
+        if cam[-1] @ ax < cam[0] @ ax:
+            ax = -ax
+        along_all = (xyz - cam[0]) @ ax
+        rad_all = np.linalg.norm((xyz - cam[0]) - np.outer(along_all, ax), axis=1)
+        keep = np.ones(len(xyz), bool)
+        if axial_window is not None:
+            keep &= (along_all >= axial_window[0]) & (along_all <= axial_window[1])
+        if max_radius_units is not None:
+            keep &= rad_all <= max_radius_units
+        roi = {"axial_window_units": axial_window, "max_radius_units": max_radius_units, "kept_fraction": round(float(keep.mean()), 4)}
+        xyz, cls = xyz[keep], cls[keep]
     r_pts = xyz[cls == "R"]
     if len(r_pts) < 100:
         raise SystemExit(f"only {len(r_pts)} R points; benchmark needs a supported wall")
@@ -180,7 +203,7 @@ def benchmark(ply: Path, diameter_mm: float, trajectory: Path | None, scale_mm: 
         mode = "RELATIVE: scale set from the fitted R radius itself, so R's physical error is near zero by construction; compare I and U to R"
     out: dict[str, object] = {"mode": mode, "scale_units_to_mm": round(scale, 6), "true_radius_mm": true_r,
                               "fitted_R_radius_mm": round(r_fit * scale, 3), "axis_from": axis_source, "axis_diagnostics": axis_diag,
-                              "R_arc_coverage_deg": arc, "R_radial_residual_over_radius": round(resid, 3), "classes": {}}
+                              "R_arc_coverage_deg": arc, "R_radial_residual_over_radius": round(resid, 3), "region_of_interest": roi, "classes": {}}
     prof_z, prof_r = slice_radius_profile(r_pts * scale, c * scale, axis, slice_mm) if profile else (None, None)
     classes: dict[str, dict[str, float | int]] = {}
     for k in ("R", "I", "U"):
@@ -230,8 +253,12 @@ def main() -> int:
     ap.add_argument("--scale-units", type=float, default=None, help="that length measured in cloud units")
     ap.add_argument("--profile", action="store_true", help="also report error against the R wall's own per-slice radius")
     ap.add_argument("--slice-mm", type=float, default=1.0)
+    ap.add_argument("--axial-window", default=None, help="keep points with axial position a:b (cloud units from the first camera)")
+    ap.add_argument("--max-radius-units", type=float, default=None, help="keep points within this radial distance of the camera axis")
     a = ap.parse_args()
-    out = benchmark(a.ply, a.diameter_mm, a.trajectory, a.scale_mm, a.scale_units, a.profile, a.slice_mm)
+    win = tuple(float(v) for v in a.axial_window.split(":")) if a.axial_window else None
+    out = benchmark(a.ply, a.diameter_mm, a.trajectory, a.scale_mm, a.scale_units, a.profile, a.slice_mm,
+                    (win[0], win[1]) if win else None, a.max_radius_units)
     print(json.dumps(out, indent=2))
     Path(a.ply).with_name("phantom_benchmark.json").write_text(json.dumps(out, indent=2), encoding="utf-8")
     return 0 if out["ordering_R<I<U"] else 1

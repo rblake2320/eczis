@@ -57,7 +57,8 @@ def lens_note_for(lens: Path | None, lens_perturb: float) -> str:
     return f"calibrated lens {lens.name}" + (f" PERTURBED {lens_perturb:+.0%} (wrong-calibration control)" if lens_perturb else "")
 
 
-def run(folder: Path, host: str, lens: Path | None, stride: int, lens_perturb: float = 0.0) -> dict[str, object]:
+def run(folder: Path, host: str, lens: Path | None, stride: int, lens_perturb: float = 0.0,
+        frame_range: tuple[int, int] | None = None) -> dict[str, object]:
     """lens_perturb != 0 is the wrong-calibration control: the given lens is deliberately mis-specified
     (fx, fy scaled by 1+p, cx shifted by p*width/2) and the output goes to mast3r_perturbed/ so the valid
     result is preserved; the statuses say PERTURBED_CONTROL."""
@@ -67,10 +68,10 @@ def run(folder: Path, host: str, lens: Path | None, stride: int, lens_perturb: f
         raise SystemExit(f"no frames.npz in {folder}")
     if lens_perturb and lens is None:
         raise SystemExit("--lens-perturb needs --lens: the control mis-specifies a real calibration")
-    name = folder.name.replace("-", "") + ("p" if lens_perturb else "")
-    out = folder / ("mast3r_perturbed" if lens_perturb else "mast3r")
+    name = folder.name.replace("-", "") + ("p" if lens_perturb else "") + (f"r{frame_range[0]}_{frame_range[1]}" if frame_range else "")
+    out = folder / (("mast3r_perturbed" if lens_perturb else "mast3r") + (f"_r{frame_range[0]}_{frame_range[1]}" if frame_range else ""))
     out.mkdir(exist_ok=True)
-    frames = np.load(frames_file)["frames"][::stride]
+    frames = np.load(frames_file)["frames"][frame_range[0]:frame_range[1]:stride] if frame_range else np.load(frames_file)["frames"][::stride]
     h, w = frames.shape[1:3]
     # 0. image-quality gate: a glare/dark sweep is refused here, before any reconstruction exists
     from eczis.lab.scan3d import SweepRefused, require_usable
@@ -170,8 +171,10 @@ def main() -> int:
     ap.add_argument("--stride", type=int, default=1)
     ap.add_argument("--lens-perturb", type=float, default=0.0,
                     help="wrong-calibration control: mis-specify --lens by this fraction (e.g. 0.10); output to mast3r_perturbed/")
+    ap.add_argument("--range", default=None, help="frame range start:end to send (e.g. 40:80), output to mast3r_r<start>_<end>/")
     a = ap.parse_args()
-    res = run(a.folder, a.host, a.lens, a.stride, a.lens_perturb)
+    rng = tuple(int(v) for v in a.range.split(":")) if a.range else None
+    res = run(a.folder, a.host, a.lens, a.stride, a.lens_perturb, (rng[0], rng[1]) if rng else None)
     print(json.dumps({k: res[k] for k in ("points", "keyframes", "counts", "fractions", "lens", "seconds")}, indent=2))
     print("graded cloud:", res["graded_ply"])
     return 0
