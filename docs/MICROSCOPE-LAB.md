@@ -244,8 +244,11 @@ two winners still win together. `src/eczis/lab/experiments.py`, CLI `tools/exper
   declared change, git commit, policy-freeze status (`BLIND` required for a formal claim), status
   (`accepted` / `ordering_failed` / `refused` + gate message / `error_N`), the R/I/U medians, seconds.
 - **Scorer** (separate decision layer, not a second measurement — an independent re-measurement of the cloud is a
-  listed gap): `better` / `same` / `worse` on the R median physical error with a 0.05 mm margin, only when the
-  strict ordering held; refusals are `not_comparable`; negative datasets must be refused (`controls_hold`).
+  listed gap): `better` / `same` / `worse` on the R median physical error with a 0.05 mm margin, and only
+  when both runs were BLIND, share the policy digest (which fingerprints the benchmark code) and the pinned
+  dataset, and both held the strict ordering; anything else is `not_comparable`; negative datasets must be
+  refused (`controls_hold`). `combine` calls two winners compatible when together they are within the same
+  margin of the better single.
 - Declare the candidate BEFORE looking at its result; one chosen after seeing an error is unblinded and should
   say so in its name.
 
@@ -253,5 +256,5 @@ First real runs (policy BLIND, digest `7e0f2b69…`), datasets `can66-endon` (ca
 and `can-open-end` (negative): baseline `path` refused (residual 0.24), `optical` refused (0.22), `path+fit`
 refused (tilt 40.5°), `optical+fit` refused (31.4°), `axial_window=0:1.95` on the path axis kept 0 R points
 (error, so last night's window only existed relative to the optical axis), `max_radius_units=1.2` refused
-(0.26); the negative control refused under the baseline (0.50). Seven losers, all kept. The phantom is still the
+(0.26); the negative control refused under the baseline (0.50). Eight records, all kept: record 5 (`…-can66-endon-window`) was written by the first version of the runner, which called a plain benchmark error "ordering_failed" with empty metrics; the bug was fixed in the same commit and the candidate re-run as `window2` (record 8, `error_1`). The mislabelled line stays in the append-only log as a record of that bug. The phantom is still the
 blocker (a can seen end-on is not a tube the camera moved along); the runner is ready for the longer slick tube.

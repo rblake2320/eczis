@@ -165,11 +165,25 @@ def test_control_broken_rejects_a_candidate_outright() -> None:
     assert ex.score(fake, None)["verdict"] == "CONTROL_BROKEN"
 
 
+def _acc(**kw: object) -> dict[str, object]:
+    base = {
+        "dataset_kind": "phantom",
+        "status": "accepted",
+        "refusal": "",
+        "policy": "BLIND",
+        "policy_digest": "p1",
+        "dataset_digest": "d1",
+        "metrics": {"R_median_mm": 0.10, "ordering": True},
+    }
+    base.update(kw)
+    return base
+
+
 def test_compatibility_verdict_rules() -> None:
-    a = {"status": "accepted", "metrics": {"R_median_mm": 0.10}}
-    b = {"status": "accepted", "metrics": {"R_median_mm": 0.12}}
-    good = {"status": "accepted", "refusal": "", "metrics": {"R_median_mm": 0.11}}
-    bad = {"status": "accepted", "refusal": "", "metrics": {"R_median_mm": 0.30}}
+    a = _acc(metrics={"R_median_mm": 0.10, "ordering": True})
+    b = _acc(metrics={"R_median_mm": 0.12, "ordering": True})
+    good = _acc(metrics={"R_median_mm": 0.11, "ordering": True})
+    bad = _acc(metrics={"R_median_mm": 0.30, "ordering": True})
     refused = {
         "status": "refused",
         "refusal": "cylinder fit tilted",
@@ -211,3 +225,45 @@ def test_plain_benchmark_errors_are_not_called_ordering_failures(lab: dict[str, 
     assert rec["status"] == "error_1" and "R points" in rec["refusal"]
     assert rec["metrics"]["R_median_mm"] is None  # the stale file was not picked up
     assert ex.score(rec, None)["verdict"] == "not_comparable"
+
+
+def test_better_needs_blind_same_policy_same_dataset_and_ordering() -> None:
+    """Review finding 2026-10-08: 'better' must not be reachable without the blind-analysis gates."""
+    cand = _acc(metrics={"R_median_mm": 0.02, "ordering": True})
+    assert ex.score(cand, _acc())["verdict"] == "better"
+    assert (
+        ex.score(_acc(policy="CHANGED", metrics={"R_median_mm": 0.02, "ordering": True}), _acc())[
+            "verdict"
+        ]
+        == "not_comparable"
+    )
+    assert ex.score(cand, _acc(policy="NOT_FROZEN"))["verdict"] == "not_comparable"
+    assert (
+        ex.score(_acc(policy_digest="p2", metrics={"R_median_mm": 0.02, "ordering": True}), _acc())[
+            "verdict"
+        ]
+        == "not_comparable"
+    )
+    assert (
+        ex.score(
+            _acc(dataset_digest="d2", metrics={"R_median_mm": 0.02, "ordering": True}), _acc()
+        )["verdict"]
+        == "not_comparable"
+    )
+    assert (
+        ex.score(_acc(metrics={"R_median_mm": 0.02, "ordering": None}), _acc())["verdict"]
+        == "not_comparable"
+    )
+    assert (
+        ex.compatibility_verdict(_acc(), _acc(), _acc(policy="CHANGED"))["verdict"]
+        == "incompatible"
+    )
+    refused = {"status": "refused", "refusal": "x", "metrics": {"R_median_mm": None}}
+    assert (
+        ex.compatibility_verdict(refused, refused, _acc())["verdict"] == "incompatible"
+    )  # no empty-min crash
+
+
+def test_false_knob_is_not_a_change() -> None:
+    assert ex.Candidate("p", {"profile": False}).check_single() == "baseline"
+    assert ex.Candidate("p", {"profile": True}).check_single() == "profile"

@@ -139,7 +139,10 @@ class Candidate:
     def change_from(self, base: dict[str, Any]) -> list[str]:
         """Knobs whose effective value differs from the baseline; a knob the candidate does not mention keeps
         the baseline value (so {'max_radius_units': 1.2} is one change, not two)."""
-        effective = {**base, **self.args}
+        effective = {
+            **base,
+            **{k: v for k, v in self.args.items() if v is not False and v is not None},
+        }
         return sorted(k for k in effective if effective.get(k) != base.get(k))
 
     def check_single(self, base: dict[str, Any] | None = None) -> str:
@@ -194,16 +197,23 @@ def run_candidate(
         missing_ok=True
     )  # the benchmark writes beside the PLY; a stale file must never pass as this run's
     t0 = time.perf_counter()
-    r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, cwd=ROOT)
+    try:
+        r: subprocess.CompletedProcess[str] | None = subprocess.run(
+            argv, capture_output=True, text=True, timeout=timeout, cwd=ROOT
+        )
+    except subprocess.TimeoutExpired:
+        r = None
     seconds = round(time.perf_counter() - t0, 2)
     output: dict[str, Any] | None = None
-    if r.returncode in (0, 1) and out_path.exists():
+    if r is not None and r.returncode in (0, 1) and out_path.exists():
         output = json.loads(out_path.read_text(encoding="utf-8"))
         runs.mkdir(parents=True, exist_ok=True)
         (runs / f"{run_id}.json").write_text(json.dumps(output, indent=2), encoding="utf-8")
     # exit 0 = accepted, 2 = a gate refused, 1 = ordering did not hold (output written) OR a plain error such as
     # too few R points (no output): the two are told apart by whether the benchmark wrote its result
-    if r.returncode == 0:
+    if r is None:
+        status = f"timeout_{timeout}s"
+    elif r.returncode == 0:
         status = "accepted"
     elif r.returncode == 2:
         status = "refused"
@@ -211,8 +221,9 @@ def run_candidate(
         status = "ordering_failed"
     else:
         status = f"error_{r.returncode}"
-    last_err = r.stderr.strip().splitlines()[-1] if r.stderr.strip() else ""
-    refusal = last_err if status in ("refused",) or status.startswith("error") else ""
+    stderr = (r.stderr if r is not None else "").strip()
+    last_err = stderr.splitlines()[-1] if stderr else f"benchmark did not finish within {timeout} s"
+    refusal = last_err if status == "refused" or status.startswith(("error", "timeout")) else ""
     blind = (output or {}).get("blind_analysis") or _freeze_status()
     classes = (output or {}).get("classes", {})
     rec = {
@@ -268,6 +279,21 @@ def read_log(log: Path = LOG) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------- scoring (separate decision layer)
 
 
+def comparable(rec: dict[str, Any], other: dict[str, Any]) -> str:
+    """Why two accepted runs may NOT be compared ("" = they may). Gates: both BLIND, same policy digest (this
+    also fingerprints the benchmark code), same pinned dataset, strict ordering held in both."""
+    for x, who in ((rec, "candidate"), (other, "baseline")):
+        if x.get("policy") != "BLIND":
+            return f"{who} policy was {x.get('policy')}, not BLIND"
+        if x.get("metrics", {}).get("ordering") is not True:
+            return f"{who} run did not hold the strict R<I<U ordering"
+    if rec.get("policy_digest") != other.get("policy_digest"):
+        return "policy/benchmark code differs between the runs (freeze digests differ)"
+    if rec.get("dataset_digest") != other.get("dataset_digest"):
+        return "the runs used different pinned datasets"
+    return ""
+
+
 def score(rec: dict[str, Any], baseline: dict[str, Any] | None) -> dict[str, Any]:
     """Verdict for one run against the baseline run on the same dataset.
 
@@ -292,6 +318,9 @@ def score(rec: dict[str, Any], baseline: dict[str, Any] | None) -> dict[str, Any
             "verdict": "accepted_no_baseline",
             "why": "baseline absent or not accepted; nothing to compare against",
         }
+    blocked = comparable(rec, baseline)
+    if blocked:
+        return {"verdict": "not_comparable", "why": blocked}
     r, b = rec["metrics"]["R_median_mm"], baseline["metrics"]["R_median_mm"]
     if r is None or b is None:
         return {"verdict": "not_comparable", "why": "R median missing"}
@@ -335,18 +364,30 @@ def compatibility_verdict(
             "verdict": "incompatible",
             "why": f"combined run {ab_rec['status']}: {ab_rec['refusal']}",
         }
-    best = min(
-        x["metrics"]["R_median_mm"]
+    singles = [
+        x
         for x in (a_rec, b_rec)
         if x["status"] == "accepted" and x["metrics"]["R_median_mm"] is not None
-    )
+    ]
+    if not singles:
+        return {
+            "verdict": "incompatible",
+            "why": "neither single-change run was accepted; nothing to combine",
+        }
+    for x in singles:
+        blocked = comparable(ab_rec, x)
+        if blocked:
+            return {"verdict": "incompatible", "why": blocked}
+    best = min(x["metrics"]["R_median_mm"] for x in singles)
     both = ab_rec["metrics"]["R_median_mm"]
     if both is None:
         return {"verdict": "incompatible", "why": "combined run has no R median"}
-    ok = both <= best + IMPROVEMENT_MARGIN_MM
+    ok = (
+        both <= best + IMPROVEMENT_MARGIN_MM
+    )  # "at least as good" within the same margin the scorer uses
     return {
         "verdict": "compatible" if ok else "incompatible",
-        "why": f"combined R median {both} vs best single {best} mm",
+        "why": f"combined R median {both} vs best single {best} mm (margin {IMPROVEMENT_MARGIN_MM})",
     }
 
 

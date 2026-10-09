@@ -83,6 +83,9 @@ def main() -> int:
         return 0
     if a.cmd == "run":
         ds = load_dataset(a.dataset)
+        if a.candidate == "baseline" and a.knobs:
+            print("'baseline' takes no knobs; name the candidate after its change", file=sys.stderr)
+            return 2
         cand = Candidate(
             a.candidate, dict(BASELINE_ARGS) if a.candidate == "baseline" else parse_kv(a.knobs)
         )
