@@ -1,0 +1,221 @@
+# UNFILED-IP
+# Capability doors — things the bench showed are needed, with the evidence that showed it
+
+A door is logged when work makes a previously unavailable capability possible or shows it is
+required. Each entry keeps the triggering evidence, the prior art looked at, and the routing
+decision. Evidence words: observed / reproduced / measured / verified. "Novel" is never claimed
+without a prior-art search recorded here.
+
+## DOOR-20261007-01 — Smooth / specular interiors need projected texture and specular control
+
+**Triggering evidence (observed, 2026-10-07 live bench, real endoscope, policy frozen 13:40):**
+- Sweep `20261007-212758`, aluminium tube: refused at the image-quality gate, clipped-bright
+  median 12.3 % (threshold 5 %). Record: `summary.json` status `REFUSED: GLARE`.
+- Sweep `20261007-213024`, matte package interior: passed glare (3.3 %), refused for motion,
+  tracked points moved 3.5 px (threshold 25). Record: `summary.json` status `REFUSED: NOT ENOUGH MOTION`.
+- Sweep `20261007-215934`, same interior, enough motion: local tracker placed 25 of 120 frames in
+  3 segments, R 6 / I 50 / U 989; MASt3R-SLAM on the Spark with the calibrated lens returned a
+  **0-vertex** cloud and 11 poses with ~0.004 units of total translation. Record:
+  `mast3r/result.json` status `REFUSED: reconstructor returned 0 points`.
+- The operator's stated target is plumbing: "pipes are smooth and slick".
+
+**Why (physics):** every camera-only method here (LK tracking, MASt3R) needs wall appearance
+that differs from place to place. A slick wall gives saturated specular hotspots, featureless
+regions between them, and reflections that move with the camera (violating the static-scene
+assumption). The refusals are correct behaviour; the imaging is starved.
+
+**Prior art (looked at, not exhaustive):** industrial measurement borescopes project laser
+dots/lines or a shadow stripe from the tip for metric 3D on reflective interiors (Olympus
+IPLEX stereo/laser tips, Waygate Mentor Visual iQ 3D phase measurement); cross-polarised
+illumination is standard for suppressing specular reflection in dermatology and machine
+vision; structured light (dot grids, ring projectors) is standard in pipe profiling. None of
+this is novel; what ECZIS adds is per-point evidence grading on top of whatever texture source
+is used, and explicit refusal when there is none.
+
+**What it would take:**
+1. Projected texture at the tip: a laser dot-grid/ring cap or a separate laser pointer with a
+   grid diffraction cap shone down the pipe (cheap test, no code change: the motion gate,
+   Spark reconstruction, grading and phantom benchmark all run as-is on the dots).
+2. Specular control: diffuser on the LED ring; cross-polarised LED + lens polariser.
+3. Later: use the specular highlight curve on a cylinder as a geometric cue (weaker, model-based).
+
+**Value:** inside this project it is the difference between "works on textured canals" and
+"works on pipes"; outside it, the same probe + grading applies to any reflective bore
+(hydraulic lines, heat-exchanger tubes, gun barrels, ducts).
+
+**Routing (owner decision pending):** immediate cheap test with a laser pointer + grid cap and
+LED tape on the aluminium tube; if dots track, add a projected-texture mode to the protocol
+(record the projector as part of the capture mode) before any claim about pipes.
+
+## DOOR-20261007-02 — Evidence-labelled image clean-up from a burst (text on packaging)
+
+**Trigger (observed):** operator snapshots of a drink-mix package: large print readable, fine
+print not, single frames defocused (lens focus 1-3 cm). Request: "clean up how the writing looks".
+
+**Built:** `tools/burst_enhance.py` — ECC registration of a recorded burst to a reference frame,
+mean fusion, per-pixel R/I/U support by frame agreement, optional Richardson-Lucy deblur labelled
+as a re-rendering that adds no evidence. No generative model.
+
+**Measured (2026-10-07 22:04, burst `artifacts/earscan/20261007-220435`, 120 frames of the
+package's warning text, real endoscope):** 120/120 frames aligned (ECC correlation median
+0.998); support R 99.0 % / I 0.9 % / U 0.1 % of pixels; noise removed from the reference frame
+s.d. 0.0137 (intensity units). Fine print that is grainy in the single frame reads cleanly in
+`fused.png` / `fused_deblur.png` ("Do not exceed 2 packets per day", "consult your ... practitioner
+before use if ... pregnant, nursing, taking medication", "out of reach of children", "B6 (as
+pyridoxine ...)"). The same burst is REFUSED for 3D (glare 17.2 %): image clean-up and 3D have
+different gates, and the record says which applied. Operator-side artifacts stay local (gitignored).
+
+**Also measured on a moving subject (operator's own eye, 120-frame burst `20261007-220638`):**
+frame-to-frame motion median 10 px, p90 39 px; with the default acceptance only 27/120 frames
+aligned (cc >= 0.97), R 60 % / I 27 % / U 12 %. Found and fixed a flaw: the corneal LED hotspot
+is constant relative to the camera and was counting as supported; clipped-bright pixels are now
+U regardless of agreement. The tool reports frames rejected and the forced-U fraction.
+
+## DOOR-20261007-03 — Corneal reflection imaging (forensic): method works, this sensor cannot
+
+**Trigger (observed):** operator eye shots show two reflections in the cornea; question raised
+whether what the subject was looking at can be recovered ("could be major in crime labs").
+
+**Prior art:** Jenkins & Kerr 2013 (PLoS ONE) recovered identifiable bystander faces from
+corneal reflections in 39-megapixel portraits; the cornea acts as a convex mirror of radius
+~7.8 mm (focal length ~3.9 mm), so an object of size S at distance d forms an image of
+S x 3.9 / (d + 3.9) mm on the cornea.
+
+**Measured here (640x480 endoscope, calibrated fx 816 px, ~23 mm from the eye assuming an
+11.7 mm iris -> 35 px/mm at the cornea):** LED-ring highlight ~50 px; a second reflection
+~50 px across, identical colour in two shots (RGB 67/90/110), at a near-constant offset from
+the highlight. My inference from size/offset was "the probe's own tip"; the operator's ground
+truth is **the monitor: an LG 45-inch curved ultrawide with a water wallpaper behind open
+terminal windows** (the water explains the teal; the windows the dark structure), and the
+white disc is the endoscope. Enlarged 8x, the reflection shows the screen's tilted rectangle
+and a brighter band, no window detail: one terminal text line is under a pixel on this sensor. Lesson recorded: the reflection
+geometry alone was ambiguous at this resolution and a wrong inference was stated with more
+confidence than the data allowed; ground truth from the scene must be asked for before any
+identification is claimed. Predicted corneal images
+at this camera: 27-inch monitor at 0.7 m ~116 px (a blob), a face at 0.6 m ~45 px (no identity),
+a hand at 0.4 m ~61 px. Conclusion: the analysis path (locate iris, locate highlight, crop at
+native pixels, labelled enhancement, convex-mirror geometry) is sound and cheap; recovering
+scene identity needs a sensor with roughly 10-50x the pixels on the cornea. Not novel; a
+possible ECZIS angle is the evidence labelling of such enhancements (what is supported by how
+many frames) rather than the recovery itself. Routing: roadmap note only; no claim.
+
+## DOOR-20261007-04 — The phone as the sensor: live bridge, LiDAR scale, deflectometry for slick pipes
+
+**Trigger:** operator question "could you ever see what my phone shows in a live camera view";
+phone is an iPhone with LiDAR.
+
+**Built tonight:** `eczis.lab.phone_cam` — a local HTTPS page (self-signed, LAN only) the phone
+opens in its browser; frames stream to the PC over a WebSocket, the coach caption is shown on
+the phone and spoken by the phone; `scan_app --phone` runs the whole scan window on it, with
+full-resolution stills on Snapshot. `tools/lidar_stream.py` — Record3D USB receiver (colour,
+LiDAR depth in metres, camera pose, phone-reported intrinsics) writing the lab's layout; written
+before being run against a phone, so unverified.
+
+**Why it matters:** (1) the phone's depth and pose are measurements INDEPENDENT of the
+reconstructor, so the evidence grader can check MASt3R against them instead of against itself;
+(2) metric scale and intrinsics arrive with every frame, closing NO_SCALE/UNCALIBRATED without a
+ruler; (3) **deflectometry** — showing a known stripe pattern on the monitor/phone and recording
+its reflection in a shiny surface is the standard way to measure mirror-like surfaces; the
+reflection that broke the matcher becomes the measurement (prior art: phase-measuring
+deflectometry, Knauer/Kaminski/Häusler 2004; used industrially for car bodies and optics); the
+corneal-reflection result above is the same physics on a convex mirror. Also: the phone can watch
+the endoscope from outside and give the probe's insertion distance from its own tracking.
+
+**Routing:** build order per the operator's plan: web bridge (done) -> Record3D depth/pose
+(needs the app on the phone + USB) -> deflectometry test on the aluminium tube with phase-shifted
+stripes on the LG monitor -> corneal reflection at phone resolution. Keep compressed live video
+for guidance only; evidence comes from stills/RAW/depth.
+
+**Deflectometry, first run (observed 2026-10-07 22:38, sweep `20261007-223826`, iPhone via the
+bridge, 1080x1920, stripes from `tools/stripes.py` in a browser window on the LG monitor, not yet
+full screen):** the stripes reflect as concentric rings inside the aluminium tube (frame 100) and
+bend around its outside (frame 20). Gates passed (glare 0.01 %, dark 8 %). Local tracker: R 48
+(plain wall earlier: R 6). MASt3R on the Spark: **505,871 points, 19 keyframes** (plain matte wall
+with the calibrated endoscope: 0 points). Caveats that keep this from being a result yet: the
+sweep mixed three views (tube exterior, the screen, tube interior), so most of the cloud is the
+desk and monitor; lens UNCALIBRATED / NO_SCALE (phone); grading is the visibility grader, not the
+evidence grader. The decisive run is an interior-only sweep with the pattern full screen.
+
+**Second and third runs (observed 2026-10-07 22:43 and 22:57):** the long aluminium tube,
+interior frames only (`20261007-224325`, frames 35-85): 16,471 points from ONE keyframe ->
+all U (dark near wall, rings only at the far end). **Soda can with top and bottom cut off**
+(`20261007-225717`, phone pinned to the single back camera, stripes full screen): gates
+passed (glare 0 %, dark 4 %); MASt3R **368,821 points, 40 keyframes spanning frames 0-116**;
+evidence grader (stride 2, 1.47 M points): **R 41.7 % / I 1.3 % / U 57.0 %** (depth-conflict
+sheets 829 k, no-agreeing-view 53 k, parallax p50 16.9 deg). The frames show the stripes
+reflected as warped bands on the bare can wall: the deflectometry texture is real and the
+tracker holds on it. The 66 mm benchmark REFUSED (R radial residual 0.34 of the radius):
+the R points lie in a thin axial slab (1.97-2.2 units from the first camera) spread as a
+disc, i.e. the screen seen through the open bottom plus the desk, not the wall; the wall is
+in the U sheets. Policy-freeze status at this point: CHANGED (grade_dense.py gained an
+empty-cloud guard after the 13:40 freeze), so any benchmark tonight is recorded UNBLINDED.
+Next: cap the far end with paper so only wall reflections remain, move along the axis.
+
+**Fourth run (observed 2026-10-07 23:07, `20261007-230658`, can standing on the printed
+checkerboard page, phone looking straight down the axis):** local tracker 104/120 frames in ONE
+segment (best of the night). MASt3R 16 keyframes; evidence grader **R 53.3 % / I 4.2 % / U 42.5 %**
+(parallax p50 5.4 deg: the camera barely translated). End-on projection of the R points along the
+cameras' optical axis shows a clear **ring** (the can wall) with the floor hole in the middle
+(`mast3r/endon_window.png`); the U points are a second, thinner ring (the double sheet). The 66 mm
+benchmark still REFUSED three ways, each honest: path axis (camera moved 0.2 units, direction is
+noise); optical axis with a declared floor-excluding window (axial 0-1.95, radius <= 1.2):
+median radial residual **0.16 vs the frozen 0.15**; optical axis + least-squares cylinder
+refinement: the fit tilted 47 deg (cap 15) because the window still held floor/desk remnants
+around the rim. Not loosened. What this run establishes: with screen-pattern illumination a
+bare aluminium interior is tracked end to end and its wall reconstructs as a ring; what it
+does not establish: a metric diameter, because the benchmark's phantom model (long straight
+tube, camera moving along it) does not match a short can viewed end-on with a textured floor.
+
+**Paused by the operator 23:12.** Blockers and the fix for each, in order:
+1. Phantom geometry vs benchmark model: either a longer slick tube (pipe offcut) with the
+   probe moving along it, or a benchmark mode for end-on cans that segments the ring by radial
+   histogram instead of an axial window (declared, tested on synthetic cans first).
+2. Texture on slick walls: proven by stripes from a screen; a probe-mounted projector (laser
+   grid cap) is the portable version. Record the projector in the capture mode.
+3. Scale and lens for the phone: Record3D (LiDAR depth + pose + intrinsics over USB), tool
+   written, unrun. Also the checkerboard visible in-scene is a metric reference to exploit.
+4. Live stream quality: 8 fps JPEG over the LAN page is guidance-grade; evidence bursts need
+   stills/RAW (custom capture app or Record3D).
+5. Policy freeze: re-freeze (with a note) before the next formal run, since grade_dense.py and
+   phantom_benchmark.py changed after 13:40 (empty-cloud guard, ROI/axis options, cylinder fit).
+
+## DOOR-20261007-05 — The phone as the conversational front end (verified 2026-10-07 23:53)
+
+**Built and observed working on an iPhone over the house Wi-Fi, no app installed:** one HTTPS page
+(`eczis.lab.phone_cam`) = live camera to the PC (~8 fps 1080p, guidance grade), full-res stills, PC
+-> phone commands with result report-back (zoom 2x ok, camera select, stripe pattern on the phone
+screen, beep after a tap, still), a face overlay driven from the PC (mood-buddy frames: states,
+speaking mouth, idle blink), the PC's voice played by the phone (ElevenLabs render, 1.7 s; Windows
+voice fallback), and the phone microphone -> PC (hold-to-talk clips, or auto-listen) -> faster-whisper
+on the GPU -> the coach channel -> `tools/responder.py` (Claude Code CLI, one sentence or two) ->
+ElevenLabs -> the face. First real exchange: operator "Can you hear me?" -> "Yes, I hear you fine,
+loud and clear..." (responder.log 23:53:51). A Siri Shortcut can POST dictated text to
+`http://<pc>:8444/ask` and gets the same answer through the face (verified with curl).
+
+**Failures found and fixed on the way (all in commits tonight):** iOS Safari refuses wss on a
+self-signed cert (switched to HTTPS posts); Safari serves a cached page even on reopen (no-store +
+query-string reloads); iOS lens auto-switching broke sweeps (pin "Back Camera"); a second
+getUserMedia for audio stops the video stream (one combined stream); the audio context stays
+suspended until a tap (resume inside the gesture; hold-to-talk needs no level detection);
+faster-whisper 1.2.1 fails with PyAV 19 (`metadata_errors`), works with 18.1.0; the `claude` CLI
+is a .cmd shim on Windows (resolve + shell); the PC speakers echoing into the phone mic made the
+responder answer itself (phone is the voice when linked; similarity echo filter).
+
+**Phone playback verified 2026-10-08 00:08** by the page's own trace (`decoded 8.5s playing -> played 8.5s`,
+one `/speech` fetch): an ElevenLabs reply played from the iPhone speaker with the face animating. The last
+blocker was the page's Voice toggle being OFF (relabelled, PC override added), after render-before-caption
+ordering and AudioContext playback fixes.
+
+**Latency, honestly:** turn-based, ~5-10 s per exchange (clip -> Whisper -> Claude -> ElevenLabs).
+Streaming ASR + streaming TTS + barge-in would reach ~1.5 s with Claude in the loop; sub-200 ms
+full-duplex means PersonaPlex (already on Spark-1) speaking for itself with the lab behind it.
+
+**Routing decision (owner, 2026-10-08):** this capability is a standalone product and now lives in its own
+private repository, developed there. It is related to ECZIS: it grew out of this bench and can serve as the
+phone front end for the evidence lab later; the separation is of repo, identity and IP, not of lineage. The
+lab copies of the phone bridge, coach and responder stay here as bench tooling. The phantom benchmark work
+above is paused, not abandoned.
+
+**Product note (operator asked about the App Store):** feasible as a native iOS client (camera
+control, ARKit depth/pose, on-device or server speech, the face) with the evidence core kept
+server-side; needs the IP filing/licensing decision first and must stay clear of medical claims.

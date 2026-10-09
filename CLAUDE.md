@@ -20,7 +20,7 @@ Claude Code needs on this machine.
 
 ## Quick reference (this machine)
 
-- Working copy: `C:\Users\techai\eczis` · remote: `rblake2320/eczis` (private)
+- Working copy: `D:\Projects\eczis` (`C:\Users\techai\eczis` is a junction to it; `.mcp.json` uses the D: path) · remote: `rblake2320/eczis` (private)
 - Green path: `.\Run-ECZIS.ps1 -OpenViewer` (PowerShell 7)
 - Gates before any push: `uv run pytest` + `uv run python tools/ip_gate.py` +
   `uv run python tools/claims_check.py`
