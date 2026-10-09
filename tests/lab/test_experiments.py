@@ -267,3 +267,9 @@ def test_better_needs_blind_same_policy_same_dataset_and_ordering() -> None:
 def test_false_knob_is_not_a_change() -> None:
     assert ex.Candidate("p", {"profile": False}).check_single() == "baseline"
     assert ex.Candidate("p", {"profile": True}).check_single() == "profile"
+
+
+def test_combine_needs_both_singles_accepted() -> None:
+    refused = {"status": "refused", "refusal": "x", "metrics": {"R_median_mm": None}}
+    v = ex.compatibility_verdict(_acc(), refused, _acc())
+    assert v["verdict"] == "incompatible" and "both single-change runs" in v["why"]

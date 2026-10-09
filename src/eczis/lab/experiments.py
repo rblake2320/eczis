@@ -139,6 +139,7 @@ class Candidate:
     def change_from(self, base: dict[str, Any]) -> list[str]:
         """Knobs whose effective value differs from the baseline; a knob the candidate does not mention keeps
         the baseline value (so {'max_radius_units': 1.2} is one change, not two)."""
+        # False and None both mean "not set": a flag left off and a value left empty are not changes
         effective = {
             **base,
             **{k: v for k, v in self.args.items() if v is not False and v is not None},
@@ -369,10 +370,10 @@ def compatibility_verdict(
         for x in (a_rec, b_rec)
         if x["status"] == "accepted" and x["metrics"]["R_median_mm"] is not None
     ]
-    if not singles:
+    if len(singles) < 2:  # "two winners": both single-change runs must have been accepted
         return {
             "verdict": "incompatible",
-            "why": "neither single-change run was accepted; nothing to combine",
+            "why": "both single-change runs must be accepted before they are combined",
         }
     for x in singles:
         blocked = comparable(ab_rec, x)
