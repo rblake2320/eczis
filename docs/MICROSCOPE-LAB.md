@@ -225,3 +225,33 @@ physical discrimination; large R tail -> add metric uncertainty or demote unstab
 global and profile disagree -> tube/model mismatch; twist improves coverage but worsens error ->
 tracking or calibration degraded; a failure control that still yields R -> evidence policy
 needs repair.
+
+## Experiment runner (2026-10-08): one declared change at a time, losers kept
+
+Borrowed from the public integer-multiplication exponent race (owner decision 2026-10-08): pin the inputs,
+change one knob per candidate, run the negative control on every candidate, keep every result, and test whether
+two winners still win together. `src/eczis/lab/experiments.py`, CLI `tools/experiment.py`, tests
+`tests/lab/test_experiments.py` (synthetic tube + not-a-tube, end to end through the real benchmark).
+
+- **Pin** a dataset once: files and SHA-256 recorded under `artifacts/experiments/datasets/<name>.json`; a pinned
+  file that changes refuses every later run. Kinds: `phantom` (known diameter) or `negative` (not a tube; any
+  candidate that accepts it is `CONTROL_BROKEN` and unusable).
+- **Candidate** = benchmark knobs only (`axis_from`, `axial_window`, `max_radius_units`, `profile`, `slice_mm`,
+  `scale_mm`, `scale_units`); policy constants are not knobs. A candidate may differ from the baseline in exactly
+  one knob; `combine a b` is the only compound run (the compatibility check: together must be at least as good as
+  the better single, else `incompatible`).
+- **Record** per run (append-only `artifacts/experiments/log.jsonl`, full output under `runs/`): dataset digest,
+  declared change, git commit, policy-freeze status (`BLIND` required for a formal claim), status
+  (`accepted` / `ordering_failed` / `refused` + gate message / `error_N`), the R/I/U medians, seconds.
+- **Scorer** (separate decision layer, not a second measurement — an independent re-measurement of the cloud is a
+  listed gap): `better` / `same` / `worse` on the R median physical error with a 0.05 mm margin, only when the
+  strict ordering held; refusals are `not_comparable`; negative datasets must be refused (`controls_hold`).
+- Declare the candidate BEFORE looking at its result; one chosen after seeing an error is unblinded and should
+  say so in its name.
+
+First real runs (policy BLIND, digest `7e0f2b69…`), datasets `can66-endon` (capped can, phantom, 4 files pinned)
+and `can-open-end` (negative): baseline `path` refused (residual 0.24), `optical` refused (0.22), `path+fit`
+refused (tilt 40.5°), `optical+fit` refused (31.4°), `axial_window=0:1.95` on the path axis kept 0 R points
+(error, so last night's window only existed relative to the optical axis), `max_radius_units=1.2` refused
+(0.26); the negative control refused under the baseline (0.50). Seven losers, all kept. The phantom is still the
+blocker (a can seen end-on is not a tube the camera moved along); the runner is ready for the longer slick tube.
