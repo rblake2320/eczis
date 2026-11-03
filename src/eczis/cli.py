@@ -178,6 +178,9 @@ def provenance(args: argparse.Namespace) -> int:
     np.save(args.output / "provenance.npy", classes, allow_pickle=False)
     np.save(args.output / "confidence.npy", confidence, allow_pickle=False)
     provenance_rgba(classes, alpha=255).save(args.output / "provenance.png")
+    (args.output / "provenance.json").write_text(
+        json.dumps({"native_scale": capture.calibration.scale}, indent=2), encoding="utf-8"
+    )
     _json({"status": "PASS", "output": args.output})
     return 0
 
@@ -187,6 +190,8 @@ def render(args: argparse.Namespace) -> int:
     classes = np.load(args.provenance / "provenance.npy", allow_pickle=False).astype(np.uint8)
     confidence = np.load(args.provenance / "confidence.npy", allow_pickle=False).astype(np.float32)
     residual = np.load(args.gate / "score.npy", allow_pickle=False).astype(np.float32)
+    # Fail closed: the zoom policy needs the native scale; never guess it.
+    native_scale = int(json.loads((args.provenance / "provenance.json").read_text(encoding="utf-8"))["native_scale"])
     write_offline_viewer(
         args.output,
         reconstruction=image,
@@ -194,6 +199,7 @@ def render(args: argparse.Namespace) -> int:
         confidence=confidence,
         residual=residual,
         metadata={"synthetic_only": True, "source": "staged CLI workflow"},
+        native_scale=native_scale,
     )
     _json({"status": "PASS", "output": args.output})
     return 0
