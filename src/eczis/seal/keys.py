@@ -33,7 +33,7 @@ def dpapi_available() -> bool:
 
 
 def _dpapi(data: bytes, *, protect: bool) -> bytes:  # pragma: no cover - exercised on Windows CI
-    if not dpapi_available():
+    if sys.platform != "win32":  # narrows for mypy: the body below is type-checked on Windows only
         raise OSError("DPAPI is only available on Windows")
     import ctypes
     from ctypes import wintypes
@@ -45,8 +45,8 @@ def _dpapi(data: bytes, *, protect: bool) -> bytes:  # pragma: no cover - exerci
         buffer = ctypes.create_string_buffer(payload, len(payload))
         return DataBlob(len(payload), ctypes.cast(buffer, ctypes.POINTER(ctypes.c_char))), buffer
 
-    crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)  # type: ignore[attr-defined]
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+    crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     data_in, _keep_in = _blob(data)
     entropy, _keep_entropy = _blob(_ENTROPY)
     data_out = DataBlob()
@@ -61,7 +61,7 @@ def _dpapi(data: bytes, *, protect: bool) -> bytes:  # pragma: no cover - exerci
             ctypes.byref(data_in), None, ctypes.byref(entropy), None, None, flags, ctypes.byref(data_out)
         )
     if not ok:
-        raise OSError(ctypes.get_last_error(), "DPAPI call failed")  # type: ignore[attr-defined]
+        raise OSError(ctypes.get_last_error(), "DPAPI call failed")
     try:
         return ctypes.string_at(data_out.pbData, data_out.cbData)
     finally:
