@@ -38,9 +38,13 @@
 
 ## Honest limits (measured, reported, not claimed)
 
+- **Open P1 — calibration-uncertainty gap:** under PSF mismatch, microglyph/PCB R pixels
+  (3–5 % of the image) show 47 % / 21 % supported-band false-R, because the identifiability
+  band uses the optimistic estimated PSF. Coin/iris stay <= 1.1 %. See `docs/BENCHMARK_RESULTS.md`.
+
 - R asserts the supported-band component only; full-band false-R is reported alongside.
 - Gate detection rate for injected detail is SNR-dependent (coin at 250 e-: 0.32); injected R/M stays 0 in every tested regime.
-- Shift-and-add does not beat bicubic on every family (see `docs/BENCHMARK_RESULTS.md`).
+- Shift-and-add does not beat bicubic on every family; MAP beats shift-and-add on 5/5 (`docs/BENCHMARK_RESULTS.md`).
 - Windows-vs-Linux numerics are asserted by golden tolerances; first Windows CI run on this branch is the evidence.
 
 ## Deferred by design
