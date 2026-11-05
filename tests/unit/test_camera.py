@@ -14,7 +14,14 @@ def _obs(seed: int = 1) -> ObservationParams:
 
 
 def test_truth_and_estimated_models_are_distinct() -> None:
-    assert TruthCameraModel is not EstimatedCameraModel
+    truth_cls: type[object] = TruthCameraModel
+    estimated_cls: type[object] = EstimatedCameraModel
+    assert truth_cls is not estimated_cls
+    # Distinct behaviour, not just distinct names: same scene, same params, different output.
+    scene = np.random.default_rng(5).random((32, 40)).astype(np.float32)
+    truth = TruthCameraModel(scale=2, psf_sigma_lr=0.7, read_noise_std=0.0, shot_electrons=1e9, saturation_level=1.0)
+    estimated = EstimatedCameraModel(scale=2, psf_sigma_lr=0.7)
+    assert not np.allclose(truth.project(scene, _obs()).data, estimated.project(scene, _obs()), atol=1e-3)
 
 
 def test_forward_adjoint_inner_product_identity() -> None:

@@ -2,37 +2,32 @@
 from __future__ import annotations
 
 import json
-import platform
 import shutil
-import sys
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 from PIL import Image
 
-from eczis.bench.metrics import challenge_detection_rate, feature_scores, psnr, rmse
-from eczis.bench.report import write_report
-from eczis.camera.calibration import calibration_from_config
-from eczis.camera.estimated_model import EstimatedCameraModel
-from eczis.camera.truth_model import TruthCameraModel
+from eczis.atomic import atomic_write_text
+from eczis.bench.datasets import SPLITS, TARGET_FAMILIES, require_split
+from eczis.bench.pipeline import (
+    estimated_model_for,
+    run_case,
+    truth_model_for,
+)
+from eczis.bench.report import write_benchmark_report, write_report
+from eczis.bench.stats import bootstrap_ci
 from eczis.config import DemoConfig
 from eczis.export.heatmap import provenance_rgba
 from eczis.export.payload import write_offline_viewer
 from eczis.field.tiled_raster import TiledRasterRenderer
-from eczis.gate.cycle import consistency_gate
-from eczis.gate.thresholds import GateThresholds
-from eczis.provenance.accountant import classify_provenance
-from eczis.recon.map_solver import map_reconstruct
-from eczis.recon.shift_add import bicubic_baseline, shift_add_reconstruct
-from eczis.rig.schedule import lattice_schedule
-from eczis.rig.simulated import SimulatedRig
 from eczis.schemas import ProvenanceClass
 from eczis.seal.bundle import seal_directory, verify_bundle
+from eczis.seal.environment import replay_environment
 from eczis.seal.keys import development_key
-from eczis.seal.ledger import append_event, verify_ledger
-from eczis.targets.microglyph import create_microglyph_target
+from eczis.seal.ledger import append_event, verify_ledger, write_anchor
 
 
 def _save_gray(path: Path, array: np.ndarray, *, normalize: bool = False) -> None:
@@ -55,26 +50,8 @@ def _save_montage(path: Path, frames: list[np.ndarray]) -> None:
     _save_gray(path, canvas)
 
 
-def _inject_false_feature(image: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]:
-    challenged = image.copy()
-    h, w = image.shape
-    y0, x0 = h // 2 - 10, w // 2 - 14
-    mask = np.zeros_like(image, dtype=np.bool_)
-    # A false microglyph-like H whose projected energy is intentionally detectable.
-    mask[y0 : y0 + 22, x0 : x0 + 3] = True
-    mask[y0 : y0 + 22, x0 + 18 : x0 + 21] = True
-    mask[y0 + 9 : y0 + 13, x0 : x0 + 21] = True
-    amplitude = 0.72
-    challenged[mask] = np.clip(challenged[mask] + amplitude, 0.0, 1.0)
-    return challenged.astype(np.float32), mask, amplitude
-
-
-def _method_metrics(truth: np.ndarray, feature_mask: np.ndarray, estimate: np.ndarray) -> dict[str, float]:
-    return {
-        "psnr_db": psnr(truth, estimate),
-        "rmse": rmse(truth, estimate),
-        **feature_scores(feature_mask, estimate),
-    }
+def _json_text(value: object) -> str:
+    return json.dumps(value, indent=2, sort_keys=True, default=str) + "\n"
 
 
 def run_demo(output: Path, config: DemoConfig | None = None) -> dict[str, Any]:
@@ -87,69 +64,38 @@ def run_demo(output: Path, config: DemoConfig | None = None) -> dict[str, Any]:
     ledger = artifacts / "ledger.jsonl"
     append_event(ledger, "run_started", {"root_seed": cfg.root_seed, "config": asdict(cfg)})
 
-    target = create_microglyph_target(cfg.hr_shape, seed=cfg.root_seed, stroke_px=1)
-    calibration = calibration_from_config(cfg)
-    truth_model = TruthCameraModel(
-        scale=cfg.scale,
-        psf_sigma_lr=cfg.psf_sigma_lr_truth,
-        read_noise_std=cfg.read_noise_std,
-        shot_electrons=cfg.shot_electrons,
-        saturation_level=cfg.saturation_level,
-    )
-    estimated_model = EstimatedCameraModel(scale=cfg.scale, psf_sigma_lr=cfg.psf_sigma_lr_estimated)
-    truth_cls: type[object] = truth_model.__class__
-    estimated_cls: type[object] = estimated_model.__class__
-    if truth_cls is estimated_cls:
-        raise RuntimeError("Stop condition: truth and estimated models are identical")
-    schedule = lattice_schedule(cfg.frame_count, cfg.root_seed)
-    capture = SimulatedRig(truth_model, target, calibration).capture_burst(
-        schedule, root_seed=cfg.root_seed
-    )
+    case = run_case("microglyph", cfg)
+    capture = case.capture
+    truth_model = truth_model_for(cfg)
+    estimated_model = estimated_model_for(cfg)
     append_event(
         ledger,
         "capture_completed",
-        {"target_id": target.target_id, "frame_count": len(capture.frames), "truth_digest": capture.truth_digest},
-    )
-
-    bicubic = bicubic_baseline(capture)
-    shift_add = shift_add_reconstruct(capture)
-    map_image, solver = map_reconstruct(
-        capture,
-        estimated_model,
-        regularization=cfg.regularization,
-        max_iterations=cfg.max_iterations,
+        {"target_id": case.target.target_id, "frame_count": len(capture.frames), "truth_digest": capture.truth_digest},
     )
     append_event(
         ledger,
         "reconstruction_completed",
-        {"solver_info": solver.info, "iterations": solver.iterations, "frame_weights": solver.frame_weights},
+        {
+            "solver_info": case.solver.info,
+            "iterations": case.solver.iterations,
+            "frame_weights": case.solver.frame_weights,
+        },
     )
-
-    thresholds = GateThresholds(cfg.gate_z2_threshold, min_valid_frames=max(4, cfg.frame_count // 4))
-    base_gate = consistency_gate(map_image, capture, estimated_model, thresholds)
-    provenance, confidence = classify_provenance(capture, base_gate)
-
-    challenged, injection_mask, amplitude = _inject_false_feature(map_image)
-    challenge_gate = consistency_gate(challenged, capture, estimated_model, thresholds)
-    challenge_provenance, challenge_confidence = classify_provenance(capture, challenge_gate)
-    detection = challenge_detection_rate(injection_mask, base_gate.pass_mask_hr, challenge_gate.pass_mask_hr)
+    detection = float(case.metrics["gate"]["challenge_detection_rate"])
     append_event(
         ledger,
         "challenge_completed",
-        {"amplitude": amplitude, "detection_rate": detection, "gate_threshold": cfg.gate_z2_threshold},
+        {
+            "amplitude": case.amplitude,
+            "detection_rate": detection,
+            "gate_threshold": cfg.gate_z2_threshold,
+            "max_frame_threshold": cfg.gate_max_frame_z2_threshold,
+        },
     )
 
-    method_metrics = {
-        "bicubic": _method_metrics(target.image, target.feature_mask, bicubic),
-        "shift_add": _method_metrics(target.image, target.feature_mask, shift_add),
-        "map": _method_metrics(target.image, target.feature_mask, map_image),
-    }
-    counts = {
-        ProvenanceClass(index).name: int((provenance == index).sum())
-        for index in range(4)
-    }
     report: dict[str, Any] = {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "claim": "Infinitely sampleable output, finite and explicitly classified evidence.",
         "synthetic_only": True,
         "root_seed": cfg.root_seed,
@@ -159,44 +105,39 @@ def run_demo(output: Path, config: DemoConfig | None = None) -> dict[str, Any]:
             "psf_sigma_lr_truth": cfg.psf_sigma_lr_truth,
             "psf_sigma_lr_estimated": cfg.psf_sigma_lr_estimated,
         },
-        "methods": method_metrics,
+        "methods": case.metrics["methods"],
         "gate": {
             "threshold": cfg.gate_z2_threshold,
-            "base_pass_fraction": float(base_gate.pass_mask_hr.mean()),
-            "challenge_detection_rate": detection,
-            "challenge_amplitude": amplitude,
-            "base_reasons": base_gate.reasons,
-            "challenge_reasons": challenge_gate.reasons,
+            "max_frame_threshold": cfg.gate_max_frame_z2_threshold,
+            **case.metrics["gate"],
         },
-        "provenance_counts": counts,
-        "solver": asdict(solver),
-        "environment": {
-            "python": sys.version,
-            "platform": platform.platform(),
-            "numpy": np.__version__,
-        },
+        "provenance_counts": case.metrics["provenance"]["counts"],
+        "provenance": case.metrics["provenance"],
+        "solver": asdict(case.solver),
+        "environment": replay_environment(),
     }
 
-    # Persist evidence artifacts.
-    _save_gray(artifacts / "truth.png", target.image)
+    _save_gray(artifacts / "truth.png", case.target.image)
     _save_gray(artifacts / "raw_montage.png", np.block([[f.data for f in capture.frames[:4]]]))
     _save_montage(artifacts / "raw_burst.png", [f.data for f in capture.frames])
-    _save_gray(artifacts / "bicubic.png", bicubic)
-    _save_gray(artifacts / "shift_add.png", shift_add)
-    _save_gray(artifacts / "map_reconstruction.png", map_image)
-    _save_gray(artifacts / "cycle_residual.png", base_gate.score_hr, normalize=True)
-    provenance_rgba(provenance, alpha=255).save(artifacts / "provenance.png")
-    _save_gray(artifacts / "challenged_candidate.png", challenged)
-    _save_gray(artifacts / "challenge_residual.png", challenge_gate.score_hr, normalize=True)
-    provenance_rgba(challenge_provenance, alpha=255).save(artifacts / "challenge_provenance.png")
-    np.save(artifacts / "truth.npy", target.image, allow_pickle=False)
-    np.save(artifacts / "map_reconstruction.npy", map_image, allow_pickle=False)
-    np.save(artifacts / "provenance.npy", provenance, allow_pickle=False)
-    np.save(artifacts / "confidence.npy", confidence, allow_pickle=False)
-    np.save(artifacts / "challenge_provenance.npy", challenge_provenance, allow_pickle=False)
-    np.save(artifacts / "challenge_confidence.npy", challenge_confidence, allow_pickle=False)
-    (artifacts / "capture.json").write_text(
-        json.dumps(
+    _save_gray(artifacts / "bicubic.png", case.bicubic)
+    _save_gray(artifacts / "single_frame_deconvolution.png", case.single_frame)
+    _save_gray(artifacts / "shift_add.png", case.shift_add)
+    _save_gray(artifacts / "map_reconstruction.png", case.map_image)
+    _save_gray(artifacts / "cycle_residual.png", case.base_gate.score_hr, normalize=True)
+    provenance_rgba(case.provenance, alpha=255).save(artifacts / "provenance.png")
+    _save_gray(artifacts / "challenged_candidate.png", case.challenged)
+    _save_gray(artifacts / "challenge_residual.png", case.challenge_gate.score_hr, normalize=True)
+    provenance_rgba(case.challenge_provenance, alpha=255).save(artifacts / "challenge_provenance.png")
+    np.save(artifacts / "truth.npy", case.target.image, allow_pickle=False)
+    np.save(artifacts / "map_reconstruction.npy", case.map_image, allow_pickle=False)
+    np.save(artifacts / "provenance.npy", case.provenance, allow_pickle=False)
+    np.save(artifacts / "confidence.npy", case.confidence, allow_pickle=False)
+    np.save(artifacts / "challenge_provenance.npy", case.challenge_provenance, allow_pickle=False)
+    np.save(artifacts / "challenge_confidence.npy", case.challenge_confidence, allow_pickle=False)
+    atomic_write_text(
+        artifacts / "capture.json",
+        _json_text(
             {
                 "schema_version": capture.schema_version,
                 "target_id": capture.target_id,
@@ -204,15 +145,12 @@ def run_demo(output: Path, config: DemoConfig | None = None) -> dict[str, Any]:
                 "truth_digest": capture.truth_digest,
                 "calibration": asdict(capture.calibration),
                 "observations": [asdict(frame.params) for frame in capture.frames],
-            },
-            indent=2,
-            sort_keys=True,
+            }
         ),
-        encoding="utf-8",
     )
     write_report(artifacts, report)
 
-    renderer = TiledRasterRenderer(map_image, provenance, confidence, cfg.scale)
+    renderer = TiledRasterRenderer(case.map_image, case.provenance, case.confidence, cfg.scale)
     queries = [
         asdict(renderer.query(0.5, 0.5, 1.0)),
         asdict(renderer.query(0.5, 0.5, float(cfg.scale))),
@@ -220,27 +158,26 @@ def run_demo(output: Path, config: DemoConfig | None = None) -> dict[str, Any]:
     ]
     for item in queries:
         item["provenance"] = ProvenanceClass(item["provenance"]).name
-    (artifacts / "renderer_queries.json").write_text(
-        json.dumps(queries, indent=2, sort_keys=True), encoding="utf-8"
-    )
+    atomic_write_text(artifacts / "renderer_queries.json", _json_text(queries))
 
+    viewer_metadata: dict[str, Any] = {
+        "target_id": case.target.target_id,
+        "truth_model": truth_model.__class__.__name__,
+        "estimated_model": estimated_model.__class__.__name__,
+        "frame_count": len(capture.frames),
+        "gate_threshold": cfg.gate_z2_threshold,
+        "challenge_detection_rate": detection,
+        "evidence_cutoff_cycles_per_hr_px": case.metrics["provenance"]["evidence_cutoff_cycles_per_hr_px"],
+        "synthetic_only": True,
+    }
     viewer_path = artifacts / "viewer.html"
     write_offline_viewer(
         viewer_path,
-        reconstruction=map_image,
-        provenance=provenance,
-        confidence=confidence,
-        residual=base_gate.score_hr,
-        metadata={
-            "bundle_status": "PENDING SEAL",
-            "target_id": target.target_id,
-            "truth_model": truth_model.__class__.__name__,
-            "estimated_model": estimated_model.__class__.__name__,
-            "frame_count": len(capture.frames),
-            "gate_threshold": cfg.gate_z2_threshold,
-            "challenge_detection_rate": detection,
-            "synthetic_only": True,
-        },
+        reconstruction=case.map_image,
+        provenance=case.provenance,
+        confidence=case.confidence,
+        residual=case.base_gate.score_hr,
+        metadata={**viewer_metadata, "bundle_status": "PENDING SEAL (inside bundle; see verification.json)"},
     )
 
     ledger_ok, ledger_errors = verify_ledger(ledger)
@@ -248,11 +185,12 @@ def run_demo(output: Path, config: DemoConfig | None = None) -> dict[str, Any]:
         raise RuntimeError("Ledger failed before sealing: " + "; ".join(ledger_errors))
     append_event(ledger, "preseal_verified", {"ledger_valid": True})
     key = development_key(cfg.root_seed)
+    write_anchor(ledger, key)
     key_path = output / "DEMO_ONLY.key"
     key_path.write_bytes(key)
-    (output / "KEY_WARNING.txt").write_text(
+    atomic_write_text(
+        output / "KEY_WARNING.txt",
         "This deterministic key is for the synthetic demonstration only. It is not production evidence security.\n",
-        encoding="utf-8",
     )
     bundle = seal_directory(artifacts, key, output / "eczis_demo.eczis")
     verification = verify_bundle(bundle, key)
@@ -264,10 +202,115 @@ def run_demo(output: Path, config: DemoConfig | None = None) -> dict[str, Any]:
         "manifest_digest": verification.manifest_digest,
         "bundle": bundle.name,
     }
-    (output / "verification.json").write_text(
-        json.dumps(verification_json, indent=2, sort_keys=True), encoding="utf-8"
+    atomic_write_text(output / "verification.json", _json_text(verification_json))
+    atomic_write_text(output / "RUN_SUMMARY.json", _json_text(report))
+    # The root-level viewer copy is regenerated after verification so its
+    # status banner reflects the verified state (the sealed copy cannot change).
+    write_offline_viewer(
+        output / "ECZIS_VIEWER.html",
+        reconstruction=case.map_image,
+        provenance=case.provenance,
+        confidence=case.confidence,
+        residual=case.base_gate.score_hr,
+        metadata={
+            **viewer_metadata,
+            "bundle_status": f"VERIFIED (HMAC dev key) manifest {verification.manifest_digest}",
+        },
     )
-    (output / "RUN_SUMMARY.json").write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
-    shutil.copy2(viewer_path, output / "ECZIS_VIEWER.html")
     shutil.copy2(artifacts / "REPORT.md", output / "REPORT.md")
     return {**report, "output": str(output), "bundle_valid": verification.valid}
+
+
+SUMMARY_KEYS: tuple[tuple[str, str], ...] = (
+    ("methods.map.psnr_db", "MAP PSNR (dB)"),
+    ("methods.shift_add.psnr_db", "Shift-add PSNR (dB)"),
+    ("methods.single_frame_deconvolution.psnr_db", "Single-frame deconv PSNR (dB)"),
+    ("methods.bicubic.psnr_db", "Bicubic PSNR (dB)"),
+    ("methods.map.feature_f1", "MAP feature F1"),
+    ("provenance.r_fraction", "R fraction"),
+    ("provenance.false_r_rate", "False-R rate (supported band)"),
+    ("provenance.false_r_rate_full_band", "False-R rate (full band, unobservable incl.)"),
+    ("provenance.ece", "ECE (uncalibrated confidence)"),
+    ("gate.base_pass_fraction", "Gate pass fraction"),
+    ("gate.challenge_detection_rate", "Injected-detail gate demotion rate"),
+    ("provenance.injected_pixels_labeled_r_or_m", "Injected pixels labeled R/M"),
+)
+
+
+def _lookup(metrics: dict[str, Any], dotted: str) -> float:
+    value: Any = metrics
+    for part in dotted.split("."):
+        value = value[part]
+    return float(value)
+
+
+def run_benchmark(
+    output: Path,
+    *,
+    split: str = "locked_test",
+    families: tuple[str, ...] = TARGET_FAMILIES,
+    config: DemoConfig | None = None,
+    mismatch_psf_sigma_lr: float | None = 1.0,
+) -> dict[str, Any]:
+    """Run the family x seed matrix for one registered split.
+
+    Thresholds are fixed constants registered in VALIDATION_PROTOCOL.md; this
+    function never tunes on the seeds it evaluates. The mismatch arm re-runs
+    the matrix with a wider truth PSF to show transparent degradation.
+    """
+    if split not in SPLITS:
+        raise ValueError(f"unknown split {split!r}")
+    unknown = sorted(set(families) - set(TARGET_FAMILIES))
+    if unknown:
+        raise ValueError(f"unknown target families: {unknown}")
+    seeds = SPLITS[split]
+    require_split(seeds, (split,), purpose="benchmark")
+    base_cfg = config or DemoConfig()
+    output.mkdir(parents=True, exist_ok=True)
+    arms: dict[str, DemoConfig] = {"nominal": base_cfg}
+    if mismatch_psf_sigma_lr is not None:
+        arms["psf_mismatch"] = replace(base_cfg, psf_sigma_lr_truth=mismatch_psf_sigma_lr)
+    cases: list[dict[str, Any]] = []
+    for arm, arm_cfg in arms.items():
+        for family in families:
+            for seed in seeds:
+                metrics = run_case(family, replace(arm_cfg, root_seed=seed)).metrics
+                cases.append({"arm": arm, **metrics})
+    summary: dict[str, Any] = {}
+    for arm in arms:
+        summary[arm] = {}
+        for family in families:
+            rows = [c for c in cases if c["arm"] == arm and c["family"] == family]
+            summary[arm][family] = {
+                label: bootstrap_ci([_lookup(r, key) for r in rows], seed=0) for key, label in SUMMARY_KEYS
+            }
+    map_beats_shift_add = sum(
+        1
+        for family in families
+        if summary["nominal"][family]["MAP PSNR (dB)"]["mean"]
+        > summary["nominal"][family]["Shift-add PSNR (dB)"]["mean"]
+    )
+    result: dict[str, Any] = {
+        "schema_version": "1.0",
+        "claim": "Infinitely sampleable output, finite and explicitly classified evidence.",
+        "synthetic_only": True,
+        "split": split,
+        "seeds": list(seeds),
+        "families": list(families),
+        "arms": {name: asdict(cfg) for name, cfg in arms.items()},
+        "test_set_size": {"cases_per_arm": len(families) * len(seeds), "seeds_per_family": len(seeds)},
+        "summary": summary,
+        "acceptance": {
+            "map_beats_shift_add_families": map_beats_shift_add,
+            "family_count": len(families),
+            "max_injected_pixels_labeled_r_or_m": max(
+                int(c["provenance"]["injected_pixels_labeled_r_or_m"]) for c in cases
+            ),
+            "max_m_count": max(int(c["provenance"]["m_count"]) for c in cases),
+        },
+        "cases": cases,
+        "environment": replay_environment(),
+    }
+    atomic_write_text(output / "benchmark_matrix.json", _json_text(result))
+    write_benchmark_report(output, result)
+    return result

@@ -22,8 +22,10 @@ Claude Code needs on this machine.
 
 - Working copy: `C:\Users\techai\eczis` · remote: `rblake2320/eczis` (private)
 - Green path: `.\Run-ECZIS.ps1 -OpenViewer` (PowerShell 7)
-- Gates before any push: `uv run pytest` + `uv run python tools/ip_gate.py` +
-  `uv run python tools/claims_check.py`
+- Gates before any push: `uv run pytest --junitxml test-results.xml` +
+  `uv run python tools/ip_gate.py` + `uv run python tools/evidence_guard.py` +
+  `uv run python tools/claims_check.py --junit test-results.xml`
+  (`tools/install_hooks.py` wires the pre-commit/pre-push versions).
 - CI runs on `main` only (ubuntu + windows, Python 3.12 via uv).
 - Python 3.12 at `C:\Python312\python.exe`; `uv` manages the venv.
 

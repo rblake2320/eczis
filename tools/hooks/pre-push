@@ -1,0 +1,12 @@
+#!/bin/sh
+# UNFILED-IP -- ECZIS pre-push: full disclosure, evidence, and claims gates.
+set -e
+run() { if command -v uv >/dev/null 2>&1; then uv run --quiet python "$@"; else python "$@"; fi; }
+remote_url="$2"
+case "$remote_url" in
+  *rblake2320/eczis*|"") ;;
+  *) echo "pre-push: refusing push to unexpected remote '$remote_url' (UNFILED IP)"; exit 1 ;;
+esac
+run tools/evidence_guard.py
+run tools/ip_gate.py
+run tools/claims_check.py

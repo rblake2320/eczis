@@ -4,6 +4,7 @@ from __future__ import annotations
 import numpy as np
 from scipy.ndimage import gaussian_filter, shift
 
+from eczis.camera.noise import sample_poisson_gaussian
 from eczis.camera.operators import block_average, illumination_map
 from eczis.schemas import FloatArray, ObservationParams, RawFrame
 
@@ -56,10 +57,10 @@ class TruthCameraModel:
         sensor = sensor + np.float32(0.012) * sensor * sensor
         sensor = np.clip(sensor, 0.0, self.saturation_level)
 
-        expected_e = sensor * np.float32(self.shot_electrons)
-        shot = rng.poisson(expected_e).astype(np.float32) / np.float32(self.shot_electrons)
-        read = rng.normal(0.0, self.read_noise_std, sensor.shape).astype(np.float32)
-        noisy = np.clip(shot + read, 0.0, self.saturation_level).astype(np.float32)
+        sampled = sample_poisson_gaussian(
+            sensor, rng, shot_electrons=self.shot_electrons, read_noise_std=self.read_noise_std
+        )
+        noisy = np.clip(sampled, 0.0, self.saturation_level).astype(np.float32)
         saturation = noisy >= np.float32(self.saturation_level * 0.999)
         valid = np.isfinite(noisy) & ~saturation
         return RawFrame(noisy, valid.astype(np.bool_), saturation.astype(np.bool_), observation)

@@ -15,6 +15,29 @@ htmlcov/
 build/
 dist/
 artifacts/
+# Personal media, real-photo stress sets, and generated evidence: NEVER commit
+# (repo may be published after filing; git history is forever).
+evidence/
+private/
+personal/
+stress_sets/
+*.jpg
+*.jpeg
+*.heic
+*.heif
+*.dng
+*.cr2
+*.cr3
+*.nef
+*.arw
+*.tif
+*.tiff
+*.torn
+*.lock
+!uv.lock
+test-results.xml
+claims_evidence.json
+release_manifest.json
 *.eczis
 *.key
 *.npy

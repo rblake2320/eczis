@@ -1,14 +1,50 @@
 # UNFILED-IP
+# Every claim is synthetic software reduction-to-practice evidence only.
+# Claim language: infinitely sampleable output, finite and explicitly classified evidence.
+# tools/claims_check.py --junit enforces that every mapped test executed and PASSED.
 claims:
   - id: C1
-    text: Independent truth and estimated camera models are used.
-    tests: [test_truth_and_estimated_models_are_distinct]
+    text: Independent truth and estimated camera models are used and behave differently on identical inputs.
+    tests: [test_truth_and_estimated_models_are_distinct, test_demo_uses_nonzero_model_mismatch]
   - id: C2
-    text: Detectable injected false detail is demoted by the cycle gate.
-    tests: [test_injected_false_feature_is_demoted]
+    text: Detectable injected false detail is demoted by the cycle gate and is never labeled R or M.
+    tests: [test_injected_false_feature_is_demoted, test_challenge_changes_provenance_in_false_region, test_pipeline_never_emits_m_for_any_family]
   - id: C3
-    text: Sealed bundles detect artifact mutation and wrong keys.
-    tests: [test_bundle_round_trip_and_tamper_detection]
+    text: Sealed bundles detect artifact mutation, deletion, insertion, manifest edits, unsafe or duplicate members, and wrong keys.
+    tests: [test_bundle_round_trip_and_tamper_detection, test_single_bit_flip_detected, test_deletion_detected, test_insertion_detected, test_manifest_reorder_or_edit_breaks_hmac, test_attacker_resigned_noncanonical_manifest_rejected, test_unsafe_member_paths_rejected, test_duplicate_members_rejected, test_wrong_key_fails_cleanly]
   - id: C4
-    text: Provenance never promotes under rendering.
-    tests: [test_renderer_never_promotes]
+    text: Provenance never promotes under rendering, for both the tiled-raster and coordinate-field backends.
+    tests: [test_renderer_never_promotes, test_renderers_never_promote_property, test_poor_fit_tiles_are_capped_at_inferred]
+  - id: C5
+    text: The estimated forward operator passes the forward/adjoint inner-product identity.
+    tests: [test_forward_adjoint_inner_product_identity]
+  - id: C6
+    text: A candidate that contradicts a single observation above the per-frame threshold is rejected in the affected region, for every frame position.
+    tests: [test_single_contradicting_frame_is_rejected, test_k1_attack_sweep_over_frames]
+  - id: C7
+    text: Low-residual detail outside the estimated operator's supported band is never labeled R.
+    tests: [test_low_residual_nonidentifiable_detail_is_not_r]
+  - id: C8
+    text: Noise-only input yields no R-labeled structure, empty evidence maps entirely to U, and prior contribution cannot produce R.
+    tests: [test_noise_only_input_yields_no_verified_structure, test_empty_evidence_maps_entirely_to_u, test_prior_contribution_cannot_elevate_to_r, test_contradictory_subset_is_never_r]
+  - id: C9
+    text: On the registered synthetic coin case, false-R stays at or below 0.02 with zero injected R/M at three SNR regimes.
+    tests: [test_false_r_bounded_across_three_snr_regimes]
+  - id: C10
+    text: An interrupted seal leaves no bundle and a failed replace preserves the previous verified bundle; same-platform reseal is bit-identical.
+    tests: [test_interrupted_seal_leaves_no_bundle, test_interrupted_replace_keeps_previous_bundle, test_same_platform_replay_is_bit_identical]
+  - id: C11
+    text: The ledger detects mutation, deletion, reorder, malformed or injected records, torn tails, and, with an HMAC anchor, truncation and rewritten history; concurrent appends stay chained.
+    tests: [test_ledger_detects_mutation, test_ledger_middle_deletion_and_reorder_detected, test_ledger_tail_truncation_needs_anchor, test_ledger_forged_anchor_rejected, test_ledger_rewritten_history_with_valid_chain_caught_by_anchor, test_torn_tail_detected_blocks_append_and_repairs, test_ledger_malformed_and_injected_fields_detected, test_concurrent_appends_from_processes_keep_chain_valid]
+  - id: C12
+    text: Unknown schema majors, unknown fields, and malformed captures or configs fail closed.
+    tests: [test_unknown_major_version_fails_closed, test_unknown_schema_major_fails_closed, test_unknown_observation_field_fails_closed, test_invalid_frames_fail_closed, test_config_loader_fails_closed]
+  - id: C13
+    text: Locked-test seeds cannot be used for threshold fitting, and a calibrator fitted on calibration seeds reaches held-out ECE at or below 0.10 on the registered iris case.
+    tests: [test_locked_test_seeds_cannot_be_used_for_calibration, test_calibrator_fitted_on_calibration_improves_held_out_ece]
+  - id: C14
+    text: Seal keys are never overwritten and short key material is refused.
+    tests: [test_create_key_refuses_overwrite, test_short_key_material_rejected]
+  - id: C15
+    text: Export refuses bundles that fail verification.
+    tests: [test_export_verifies_then_extracts]

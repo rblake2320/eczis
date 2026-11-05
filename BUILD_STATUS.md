@@ -1,55 +1,51 @@
 # UNFILED-IP
-# ECZIS v0.1R1 Build Status
+# ECZIS v0.1.1 Build Status
 
-## Implemented and executed
+> Infinitely sampleable output, finite and explicitly classified evidence.
+> Evidence level: synthetic software reduction-to-practice. No physical-camera claim.
 
-- Independent truth and estimated camera models.
-- Non-zero PSF, boundary, nonlinearity, illumination, and noise mismatch.
-- Exact forward/adjoint inner-product test for the estimated linear operator.
-- Five deterministic target generators.
-- Simulated multi-frame capture rig and phase-diverse schedule.
-- Bicubic, shift-and-add, and Tikhonov/Laplacian MAP reconstruction.
-- Robust frame weighting and solver diagnostics.
-- Heteroscedastic noise-normalized cycle residual gate.
-- Detectable false-microglyph injection challenge.
-- Conservative R/I/U classification; M is intentionally absent at HR because reconstructed HR pixels are not direct samples.
-- Provenance-preserving tiled continuous renderer with scale demotion.
-- Canonical artifact manifest, SHA-256 hashes, HMAC seal, ZIP evidence bundle, and chained JSONL ledger.
-- Offline viewer with zoom, provenance overlay, residual overlay, and point inspector.
-- Staged CLI plus one-command demonstration.
-- 18 automated tests passing in the supplied execution environment.
+## Verified in this build (Linux container; Windows leg runs in CI)
 
-## Implemented but not release-complete
+| Gate | Result |
+|---|---|
+| `uv run pytest` | 139 passed, 1 skipped (`platform-not-applicable`: DPAPI round-trip, Windows-only) |
+| Coverage (`--cov=eczis`) | 95 % (CI floor raised 70 -> 80 %) |
+| `ruff check .` | clean |
+| `mypy --strict src tools tests` | clean (78 files) |
+| `tools/ip_gate.py` | PASS |
+| `tools/evidence_guard.py` | PASS |
+| `tools/claims_check.py --junit` | PASS, executed mode: 15 claims, 47 mapped tests all executed and passed |
+| `tools/verify_release.py` | PASS: release manifest with frozen test count + demo bundle verification |
+| End-to-end demo + fresh bundle verification | PASS |
 
-- The five target families exist, but the current sealed demo uses the microglyph target only.
-- Thresholding is fixed and adversarially tested, but a full calibration/development/locked-test matrix has not yet been executed.
-- Same-platform deterministic behavior is implemented; Windows-vs-Linux numerical tolerance evidence still requires CI execution.
+## Implemented
+
+- Independent truth and estimated camera models (behavioural difference tested, not just class identity).
+- Shared Poisson-Gaussian noise model (`camera/noise.py`) used by simulator and gate; explicit CFA geometry (`camera/cfa.py`, monochrome demo).
+- Exact forward/adjoint identity for the estimated operator.
+- Five deterministic target families, all run through the pipeline and the benchmark matrix.
+- Baselines: bicubic, **single-frame deconvolution**, shift-and-add, Tikhonov/Laplacian MAP.
+- Gate: region mean z^2 **plus per-frame contradiction criterion** (K-1 attack closed; ADR-0002).
+- Provenance: **supported-band identifiability** required for R (stop condition 6 enforced; ADR-0002). M never emitted for HR.
+- Renderers: deterministic tiled raster (baseline) and optional Fourier-feature coordinate field; both demote-only (property-tested).
+- Seal: canonical manifest with replay-environment metadata, deterministic ZIP, HMAC, schema-major rejection, path-traversal/duplicate-member rejection, atomic sealing.
+- Ledger: cross-process lock, torn-tail detection + quarantine repair, HMAC head anchor (detects truncation / history rewrite).
+- Keys: exclusive-create (never overwrite), 0600 on POSIX, DPAPI wrapping on Windows, minimum length.
+- Benchmark harness: split leakage guard, family x seed matrix, PSF-mismatch arm, bootstrap CIs, ECE + calibration-split calibrator.
+- CLI: `doctor demo bench export key target capture reconstruct gate provenance render seal verify`, `--config` JSON (unknown keys fail closed), structured FAIL output.
+- Tooling: executed claims gate, release verifier, evidence/personal-media guard, pre-commit / pre-push hooks.
+- Golden fixtures: exact serialization digests, tolerance-bounded numerics.
+
+## Honest limits (measured, reported, not claimed)
+
+- R asserts the supported-band component only; full-band false-R is reported alongside.
+- Gate detection rate for injected detail is SNR-dependent (coin at 250 e-: 0.32); injected R/M stays 0 in every tested regime.
+- Shift-and-add does not beat bicubic on every family (see `docs/BENCHMARK_RESULTS.md`).
+- Windows-vs-Linux numerics are asserted by golden tolerances; first Windows CI run on this branch is the evidence.
 
 ## Deferred by design
 
-- Physical camera, XY stage, focus rail, and LED-ring drivers.
-- Microscope ground-truth acquisition.
-- Coordinate MLP/Fourier-feature field.
-- Diffusion or foundation-model prior.
-- DPAPI/CNG production key storage.
-- Public-key signatures and trusted timestamps.
+- Physical camera, XY stage, focus rail, LED-ring drivers; microscope ground truth.
+- Diffusion or foundation-model priors.
+- Public-key signatures and trusted timestamps (HMAC proves integrity only to a key holder).
 - Real-world, forensic, medical, government, legal, certification, or patentability claims.
-
-## Validation performed here
-
-- `pytest`: 18/18 passed.
-- End-to-end synthetic demonstration: passed.
-- Fresh bundle verification: passed.
-- Wrong-key and artifact-mutation verification tests: passed.
-- False-feature challenge demotion: passed on the registered demo case.
-
-`mypy` and `ruff` are configured in `pyproject.toml`; they could not be installed in the isolated build container because outbound package resolution was unavailable. `Run-ECZIS.ps1` executes both after `uv sync` on a network-connected workstation.
-
-## GitHub repository readiness
-
-- Private-repository publication guard added.
-- Cross-platform Windows/Ubuntu CI added.
-- CODEOWNERS, contribution workflow, governance, issue templates, Dependabot, and roadmap added.
-- Idempotent PowerShell publisher added for `rblake2320/eczis`.
-- Local pytest, coverage, claims, IP, and compilation gates pass after repository hardening.
-- GitHub-hosted `ruff` and `mypy` execution remains to be confirmed by the first connected CI run.

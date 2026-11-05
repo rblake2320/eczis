@@ -19,7 +19,10 @@ param(
     [switch]$OpenViewer,
 
     [Parameter()]
-    [switch]$RunStaticAnalysis
+    [switch]$RunStaticAnalysis,
+
+    [Parameter()]
+    [switch]$InstallHooks
 )
 
 $ErrorActionPreference = 'Stop'
@@ -56,18 +59,37 @@ Invoke-Checked -Name 'ECZIS environment doctor' -Action {
     uv run eczis doctor
 }
 
+if ($InstallHooks) {
+    Invoke-Checked -Name 'Install git pre-commit/pre-push gates' -Action {
+        uv run python tools/install_hooks.py
+    }
+}
+
+Invoke-Checked -Name 'IP disclosure gate' -Action {
+    uv run python tools/ip_gate.py
+}
+
+Invoke-Checked -Name 'Evidence / personal-media guard' -Action {
+    uv run python tools/evidence_guard.py
+}
+
 if ($RunStaticAnalysis) {
     Invoke-Checked -Name 'Ruff' -Action {
         uv run ruff check .
     }
 
     Invoke-Checked -Name 'Mypy strict' -Action {
-        uv run mypy --strict src tests
+        uv run mypy --strict src tools tests
     }
 }
 
+$JUnit = Join-Path $PSScriptRoot 'artifacts\test-results.xml'
 Invoke-Checked -Name 'Automated tests' -Action {
-    uv run pytest
+    uv run pytest --junitxml $JUnit
+}
+
+Invoke-Checked -Name 'Executed release-claims gate' -Action {
+    uv run python tools/claims_check.py --junit $JUnit
 }
 
 Invoke-Checked -Name 'Synthetic evidence demonstration' -Action {
@@ -82,10 +104,16 @@ Invoke-Checked -Name 'Independent bundle verification' -Action {
     uv run eczis verify --bundle $Bundle --key $Key
 }
 
+$ReleaseManifest = Join-Path $OutputDirectory 'release_manifest.json'
+Invoke-Checked -Name 'Release verification' -Action {
+    uv run python tools/verify_release.py --junit $JUnit --output $ReleaseManifest --bundle $Bundle --key $Key
+}
+
 Write-Host "`nECZIS BUILD PASSED" -ForegroundColor Green
 Write-Host "Bundle : $Bundle"
 Write-Host "Viewer : $Viewer"
 Write-Host "Report : $(Join-Path $OutputDirectory 'REPORT.md')"
+Write-Host "Release: $ReleaseManifest"
 
 if ($OpenViewer) {
     Start-Process -FilePath $Viewer

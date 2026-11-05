@@ -39,7 +39,11 @@ uv sync --python 3.12
 uv run eczis doctor
 uv run pytest                    # unit + integration + adversarial
 uv run python tools/ip_gate.py       # disclosure-header gate — run before push
-uv run python tools/claims_check.py  # claim→test mapping gate
+uv run python tools/evidence_guard.py  # personal media / bundles / keys never in git
+uv run python tools/claims_check.py  # claim→test mapping gate (static)
+uv run pytest --junitxml test-results.xml
+uv run python tools/claims_check.py --junit test-results.xml  # every mapped test executed AND passed
+uv run python tools/install_hooks.py # once: pre-commit + pre-push run these gates locally
 ```
 
 CI (`.github/workflows/ci.yml`) runs on `main` pushes/PRs, ubuntu + windows.
@@ -64,7 +68,12 @@ CI (`.github/workflows/ci.yml`) runs on `main` pushes/PRs, ubuntu + windows.
 - Branch → PR into `main`; never force-push `main`.
 - Run the full gate set (pytest, ip_gate, claims_check) before pushing.
 - Adversarial tests (`tests/adversarial/`) are the honesty layer — a change
-  that weakens the false-microglyph demotion test is wrong by definition.
+  that weakens the false-microglyph demotion test, the K-1 single-frame
+  contradiction test, or the non-identifiable-detail test is wrong by definition.
+- R asserts the supported-band component only (ADR-0002). Never report a
+  false-R rate without also reporting the full-band rate.
+- Golden values (`tests/golden/golden_values.json`) change only via
+  `tools/regen_golden.py` with a CHANGELOG entry explaining why.
 - State evidence levels honestly: synthetic proof ≠ physical validation.
 - **Personal media stays out of version control.** Real-photo stress sets
   (e.g. the v0.2 Private Legacy Stress Set — family photos, minors) and
