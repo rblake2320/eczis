@@ -32,7 +32,7 @@ claims:
     tests: [test_false_r_bounded_across_three_snr_regimes]
   - id: C10
     text: An interrupted seal leaves no bundle and a failed replace preserves the previous verified bundle; same-platform reseal is bit-identical.
-    tests: [test_interrupted_seal_leaves_no_bundle, test_interrupted_replace_keeps_previous_bundle, test_same_platform_replay_is_bit_identical]
+    tests: [test_interrupted_seal_leaves_no_bundle, test_interrupted_replace_keeps_previous_bundle, test_same_platform_replay_is_bit_identical, test_manifest_order_is_codepoint_canonical_with_mixed_case]
   - id: C11
     text: The ledger detects mutation, deletion, reorder, malformed or injected records, torn tails, and, with an HMAC anchor, truncation and rewritten history; concurrent appends stay chained.
     tests: [test_ledger_detects_mutation, test_ledger_middle_deletion_and_reorder_detected, test_ledger_tail_truncation_needs_anchor, test_ledger_forged_anchor_rejected, test_ledger_rewritten_history_with_valid_chain_caught_by_anchor, test_torn_tail_detected_blocks_append_and_repairs, test_ledger_malformed_and_injected_fields_detected, test_concurrent_appends_from_processes_keep_chain_valid]

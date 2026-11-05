@@ -32,6 +32,14 @@ stable public API exists; pre-1.0 releases may contain intentional interface cha
 - Golden fixtures, adversarial suites for gate/seal/ledger, CLI/tool tests. 18 -> 140 tests.
 - `RELEASE_CLAIMS.yaml`: 4 -> 15 claims. ADR-0002. Internal `docs/PATENT_CLAIM_SEEDS.md`.
 
+### Fixed (found by the first Windows CI run)
+
+- Manifest order was platform-dependent: `Path` sorting is case-insensitive on Windows, so
+  mixed-case artifact names produced a non-canonical manifest that the verifier rejected.
+  Manifests now sort by POSIX relative string (code-point order) on every OS.
+- The backslash-path attack test was defanged on Windows (`ZipInfo` rewrites `\\` to `/`);
+  the raw name is now set explicitly.
+
 ### Changed
 
 - `classify_provenance` now requires `proposal_hr` and `model` (keyword-only); CLI

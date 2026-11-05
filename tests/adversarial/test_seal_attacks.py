@@ -47,7 +47,11 @@ def _rewrite(src: Path, dst: Path, *, mutate: dict[str, bytes | None] | None = N
                 data = replacement
             target.writestr(item.filename, data)
         for name, data in (extra or {}).items():
-            target.writestr(name, data)
+            # Set the raw name after construction: on Windows ZipInfo() rewrites os.sep
+            # ("\\") to "/", which would silently defang a backslash-path attack.
+            info = zipfile.ZipInfo("placeholder")
+            info.filename = name
+            target.writestr(info, data)
     return dst
 
 
@@ -127,6 +131,19 @@ def test_unknown_schema_major_fails_closed(sealed: Path, tmp_path: Path) -> None
     report = verify_bundle(forged, KEY)
     assert not report.valid
     assert any("unsupported schema major" in e for e in report.errors)
+
+
+def test_manifest_order_is_codepoint_canonical_with_mixed_case(tmp_path: Path) -> None:
+    """Regression (Windows CI): Path sorting is case-insensitive there; manifests must not be."""
+    root = tmp_path / "mixed"
+    root.mkdir()
+    for name in ("b.json", "REPORT.md", "a.txt", "Z.png"):
+        (root / name).write_bytes(name.encode())
+    bundle = seal_directory(root, KEY, tmp_path / "mixed.eczis")
+    with zipfile.ZipFile(bundle) as z:
+        paths = [item["path"] for item in json.loads(z.read("manifest.json"))["files"]]
+    assert paths == ["REPORT.md", "Z.png", "a.txt", "b.json"]
+    assert verify_bundle(bundle, KEY).valid
 
 
 def test_wrong_key_fails_cleanly(sealed: Path) -> None:

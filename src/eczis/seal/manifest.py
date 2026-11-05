@@ -18,8 +18,10 @@ def aggregate_digest(digests: list[str]) -> str:
 
 def build_manifest(root: Path, *, environment: dict[str, Any] | None = None) -> dict[str, Any]:
     files: list[dict[str, Any]] = []
-    for path in sorted(p for p in root.rglob("*") if p.is_file()):
-        relative = path.relative_to(root).as_posix()
+    # Sort by POSIX relative string (code-point order). Sorting Path objects is
+    # case-insensitive on Windows and would make the manifest platform-dependent.
+    entries = sorted(((p.relative_to(root).as_posix(), p) for p in root.rglob("*") if p.is_file()), key=lambda e: e[0])
+    for relative, path in entries:
         if relative in RESERVED_NAMES or relative.endswith(".eczis") or relative.endswith(".lock"):
             continue
         data = path.read_bytes()
