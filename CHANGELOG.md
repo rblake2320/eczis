@@ -37,7 +37,9 @@ stable public API exists; pre-1.0 releases may contain intentional interface cha
 - Manifest order was platform-dependent: `Path` sorting is case-insensitive on Windows, so
   mixed-case artifact names produced a non-canonical manifest that the verifier rejected.
   Manifests now sort by POSIX relative string (code-point order) on every OS.
-- The backslash-path attack test was defanged on Windows (`ZipInfo` rewrites `\\` to `/`);
+- Unsafe-path check was blind to backslash members on Windows: `zipfile` normalizes `\\` to `/`
+  in `ZipInfo.filename` on read. The verifier now also checks `orig_filename`. The attack test
+  was likewise defanged on write (`ZipInfo` rewrites `\\` to `/`);
   the raw name is now set explicitly.
 
 ### Changed

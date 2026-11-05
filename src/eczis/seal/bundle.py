@@ -78,7 +78,12 @@ def verify_bundle(path: Path, key: bytes) -> VerifyReport:
             names = set(name_list)
             if len(names) != len(name_list):
                 return VerifyReport(False, ("duplicate archive members",), None)
-            unsafe = sorted(n for n in names if _unsafe_member(n))
+            # orig_filename keeps the raw stored name; on Windows zipfile normalizes "\\"
+            # to "/" in .filename, which would hide a backslash-path member from this check.
+            unsafe = sorted(
+                {info.orig_filename for info in infos if _unsafe_member(info.orig_filename)}
+                | {n for n in names if _unsafe_member(n)}
+            )
             if unsafe:
                 return VerifyReport(False, ("unsafe archive member paths: " + ", ".join(unsafe),), None)
             if any(info.file_size > MAX_MEMBER_BYTES for info in infos):
