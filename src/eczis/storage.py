@@ -8,6 +8,9 @@ from pathlib import Path
 import numpy as np
 
 from eczis.schemas import Calibration, CaptureSet, ObservationParams, RawFrame
+from eczis.versioning import check_schema_version
+
+CAPTURE_SCHEMA_VERSION = "1.0"
 
 
 def save_capture(capture: CaptureSet, path: Path) -> Path:
@@ -37,12 +40,22 @@ def save_capture(capture: CaptureSet, path: Path) -> Path:
 def load_capture(path: Path) -> CaptureSet:
     with np.load(path, allow_pickle=False) as bundle:
         metadata = json.loads(str(bundle["metadata_json"].item()))
+        if not isinstance(metadata, dict):
+            raise ValueError("capture metadata must be an object")
+        check_schema_version(metadata.get("schema_version"), kind="capture")
+        check_schema_version(metadata.get("calibration", {}).get("schema_version"), kind="calibration")
         calibration_data = metadata["calibration"]
         calibration_data["sensor_shape"] = tuple(calibration_data["sensor_shape"])
         calibration = Calibration(**calibration_data)
         data = bundle["data"].astype(np.float32)
         valid = bundle["valid"].astype(np.bool_)
         saturation = bundle["saturation"].astype(np.bool_)
+    if data.ndim != 3 or data.shape != valid.shape or data.shape != saturation.shape:
+        raise ValueError("capture arrays must be (frames, height, width) with matching masks")
+    if not np.all(np.isfinite(data)):
+        raise ValueError("capture RAW data contains non-finite samples")
+    if len(metadata["observations"]) != data.shape[0]:
+        raise ValueError("observation count does not match frame count")
     observations = [ObservationParams(**item) for item in metadata["observations"]]
     frames = [
         RawFrame(data[i], valid[i], saturation[i], observations[i])

@@ -1,0 +1,6 @@
+#!/bin/sh
+# UNFILED-IP -- ECZIS pre-commit: block personal media / evidence / keys and missing headers.
+set -e
+run() { if command -v uv >/dev/null 2>&1; then uv run --quiet python "$@"; else python "$@"; fi; }
+run tools/evidence_guard.py --staged
+run tools/ip_gate.py

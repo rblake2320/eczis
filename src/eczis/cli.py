@@ -5,18 +5,20 @@ import argparse
 import json
 import platform
 import sys
-from dataclasses import asdict, replace
+from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
 from PIL import Image
 
 from eczis import __version__
-from eczis.bench.harness import run_demo
+from eczis.bench.datasets import SPLITS, TARGET_FAMILIES
+from eczis.bench.harness import run_benchmark, run_demo
+from eczis.bench.pipeline import make_target
 from eczis.camera.calibration import calibration_from_config
 from eczis.camera.estimated_model import EstimatedCameraModel
 from eczis.camera.truth_model import TruthCameraModel
-from eczis.config import DemoConfig
+from eczis.config import load_config
 from eczis.export.heatmap import provenance_rgba
 from eczis.export.payload import write_offline_viewer
 from eczis.gate.cycle import consistency_gate
@@ -27,9 +29,8 @@ from eczis.recon.shift_add import bicubic_baseline, shift_add_reconstruct
 from eczis.rig.schedule import lattice_schedule
 from eczis.rig.simulated import SimulatedRig
 from eczis.seal.bundle import seal_directory, verify_bundle
-from eczis.seal.keys import development_key
+from eczis.seal.keys import create_key, development_key, dpapi_available, load_key
 from eczis.storage import load_capture, save_capture
-from eczis.targets.microglyph import create_microglyph_target
 
 
 def _json(value: object) -> None:
@@ -63,12 +64,7 @@ def doctor(_: argparse.Namespace) -> int:
 
 
 def demo(args: argparse.Namespace) -> int:
-    cfg = replace(
-        DemoConfig(),
-        root_seed=args.seed,
-        frame_count=args.frames,
-        max_iterations=args.iterations,
-    )
+    cfg = load_config(args.config, root_seed=args.seed, frame_count=args.frames, max_iterations=args.iterations)
     result = run_demo(args.output, cfg)
     _json(
         {
@@ -80,18 +76,88 @@ def demo(args: argparse.Namespace) -> int:
             "viewer": str(args.output / "ECZIS_VIEWER.html"),
         }
     )
+    return 0 if result["bundle_valid"] else 3
+
+
+def bench(args: argparse.Namespace) -> int:
+    cfg = load_config(args.config)
+    families = tuple(args.family) if args.family else TARGET_FAMILIES
+    result = run_benchmark(
+        args.output,
+        split=args.split,
+        families=families,
+        config=cfg,
+        mismatch_psf_sigma_lr=None if args.no_mismatch else args.mismatch_psf,
+    )
+    _json(
+        {
+            "status": "PASS",
+            "output": args.output,
+            "split": result["split"],
+            "cases_per_arm": result["test_set_size"]["cases_per_arm"],
+            "acceptance": result["acceptance"],
+        }
+    )
     return 0
 
 
+def export(args: argparse.Namespace) -> int:
+    """Verify a sealed bundle, then extract its viewer and report. Refuses unverified bundles."""
+    import zipfile
+
+    key = _resolve_key(args)
+    report = verify_bundle(args.bundle, key)
+    if not report.valid:
+        _json({"status": "FAIL", "reason": "bundle failed verification", "errors": report.errors})
+        return 3
+    args.output.mkdir(parents=True, exist_ok=True)
+    exported: list[str] = []
+    with zipfile.ZipFile(args.bundle) as archive:
+        for name in ("viewer.html", "REPORT.md", "benchmark.json", "manifest.json"):
+            if name in archive.namelist():
+                (args.output / name).write_bytes(archive.read(name))
+                exported.append(name)
+    (args.output / "verification.json").write_text(
+        json.dumps(asdict(report), indent=2, sort_keys=True), encoding="utf-8"
+    )
+    _json({"status": "PASS", "output": args.output, "exported": exported, "manifest_digest": report.manifest_digest})
+    return 0
+
+
+def key_create(args: argparse.Namespace) -> int:
+    protect = args.protect
+    if protect == "auto":
+        protect_flag = dpapi_available()
+    else:
+        protect_flag = protect == "dpapi"
+    if protect_flag and not dpapi_available():
+        _json({"status": "FAIL", "reason": "DPAPI requested but unavailable on this platform"})
+        return 2
+    try:
+        create_key(args.output, protect=protect_flag)
+    except FileExistsError:
+        _json({"status": "FAIL", "reason": "refusing to overwrite existing key", "output": args.output})
+        return 2
+    _json({"status": "PASS", "output": args.output, "dpapi_protected": protect_flag})
+    return 0
+
+
+def _resolve_key(args: argparse.Namespace) -> bytes:
+    return development_key(args.seed) if args.key is None else load_key(args.key)
+
+
 def target_create(args: argparse.Namespace) -> int:
-    cfg = DemoConfig(root_seed=args.seed)
-    target = create_microglyph_target(cfg.hr_shape, seed=args.seed)
+    cfg = load_config(args.config, root_seed=args.seed)
+    target = make_target(args.family, cfg.hr_shape, args.seed)
     args.output.mkdir(parents=True, exist_ok=True)
     np.save(args.output / "target.npy", target.image, allow_pickle=False)
     np.save(args.output / "feature_mask.npy", target.feature_mask, allow_pickle=False)
     _save_gray(args.output / "target.png", target.image)
     (args.output / "target.json").write_text(
-        json.dumps({"target_id": target.target_id, "feature_count": target.feature_count, "config": asdict(cfg)}, indent=2),
+        json.dumps(
+            {"target_id": target.target_id, "family": args.family, "feature_count": target.feature_count, "config": asdict(cfg)},
+            indent=2,
+        ),
         encoding="utf-8",
     )
     _json({"status": "PASS", "target_id": target.target_id, "output": args.output})
@@ -99,7 +165,7 @@ def target_create(args: argparse.Namespace) -> int:
 
 
 def capture_simulate(args: argparse.Namespace) -> int:
-    cfg = DemoConfig(root_seed=args.seed, frame_count=args.frames)
+    cfg = load_config(args.config, root_seed=args.seed, frame_count=args.frames)
     target_image = np.load(args.target / "target.npy", allow_pickle=False).astype(np.float32)
     feature_mask = np.load(args.target / "feature_mask.npy", allow_pickle=False).astype(np.bool_)
     meta = json.loads((args.target / "target.json").read_text(encoding="utf-8"))
@@ -156,7 +222,11 @@ def gate(args: argparse.Namespace) -> int:
         proposal,
         capture,
         model,
-        GateThresholds(args.threshold, min_valid_frames=max(4, len(capture.frames) // 4)),
+        GateThresholds(
+            args.threshold,
+            min_valid_frames=max(4, len(capture.frames) // 4),
+            max_frame_z2_threshold=None if args.max_frame_threshold <= 0 else args.max_frame_threshold,
+        ),
     )
     args.output.mkdir(parents=True, exist_ok=True)
     np.save(args.output / "score.npy", result.score_hr, allow_pickle=False)
@@ -172,8 +242,13 @@ def provenance(args: argparse.Namespace) -> int:
     passed = np.load(args.gate / "pass_mask.npy", allow_pickle=False).astype(np.bool_)
     from eczis.schemas import GateResult
 
+    proposal = np.load(args.reconstruction, allow_pickle=False).astype(np.float32)
+    model = EstimatedCameraModel(
+        scale=capture.calibration.scale,
+        psf_sigma_lr=capture.calibration.estimated_psf_sigma_lr,
+    )
     result = GateResult(score[:: capture.calibration.scale, :: capture.calibration.scale], score, passed, {})
-    classes, confidence = classify_provenance(capture, result)
+    classes, confidence = classify_provenance(capture, result, proposal_hr=proposal, model=model)
     args.output.mkdir(parents=True, exist_ok=True)
     np.save(args.output / "provenance.npy", classes, allow_pickle=False)
     np.save(args.output / "confidence.npy", confidence, allow_pickle=False)
@@ -200,14 +275,14 @@ def render(args: argparse.Namespace) -> int:
 
 
 def seal(args: argparse.Namespace) -> int:
-    key = development_key(args.seed) if args.key is None else args.key.read_bytes()
+    key = _resolve_key(args)
     sealed = seal_directory(args.input, key, args.output)
     _json({"status": "PASS", "output": sealed, "development_key": args.key is None})
     return 0
 
 
 def verify(args: argparse.Namespace) -> int:
-    key = development_key(args.seed) if args.key is None else args.key.read_bytes()
+    key = _resolve_key(args)
     report = verify_bundle(args.bundle, key)
     _json(asdict(report))
     return 0 if report.valid else 3
@@ -225,13 +300,39 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--seed", type=int, default=20260803)
     p.add_argument("--frames", type=int, default=16, choices=(4, 9, 16, 25))
     p.add_argument("--iterations", type=int, default=36)
+    p.add_argument("--config", type=Path)
     p.set_defaults(func=demo)
+
+    p = sub.add_parser("bench", help="run the registered family x seed benchmark matrix")
+    p.add_argument("--output", type=Path, default=Path("artifacts/bench"))
+    p.add_argument("--split", choices=sorted(SPLITS), default="locked_test")
+    p.add_argument("--family", action="append", choices=TARGET_FAMILIES)
+    p.add_argument("--config", type=Path)
+    p.add_argument("--mismatch-psf", type=float, default=1.0)
+    p.add_argument("--no-mismatch", action="store_true")
+    p.set_defaults(func=bench)
+
+    p = sub.add_parser("export", help="verify a bundle and extract its viewer/report")
+    p.add_argument("--bundle", type=Path, required=True)
+    p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--key", type=Path)
+    p.add_argument("--seed", type=int, default=20260803)
+    p.set_defaults(func=export)
+
+    key = sub.add_parser("key")
+    key_sub = key.add_subparsers(dest="key_command", required=True)
+    p = key_sub.add_parser("create")
+    p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--protect", choices=("auto", "dpapi", "none"), default="auto")
+    p.set_defaults(func=key_create)
 
     target = sub.add_parser("target")
     target_sub = target.add_subparsers(dest="target_command", required=True)
     p = target_sub.add_parser("create")
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--seed", type=int, default=20260803)
+    p.add_argument("--family", choices=TARGET_FAMILIES, default="microglyph")
+    p.add_argument("--config", type=Path)
     p.set_defaults(func=target_create)
 
     capture = sub.add_parser("capture")
@@ -241,6 +342,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--seed", type=int, default=20260803)
     p.add_argument("--frames", type=int, default=16, choices=(4, 9, 16, 25))
+    p.add_argument("--config", type=Path)
     p.set_defaults(func=capture_simulate)
 
     p = sub.add_parser("reconstruct")
@@ -255,10 +357,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--reconstruction", type=Path, required=True)
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--threshold", type=float, default=8.0)
+    p.add_argument("--max-frame-threshold", type=float, default=24.0, help="<=0 disables (ablation only)")
     p.set_defaults(func=gate)
 
     p = sub.add_parser("provenance")
     p.add_argument("--capture", type=Path, required=True)
+    p.add_argument("--reconstruction", type=Path, required=True)
     p.add_argument("--gate", type=Path, required=True)
     p.add_argument("--output", type=Path, required=True)
     p.set_defaults(func=provenance)
@@ -285,9 +389,15 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> None:
-    args = build_parser().parse_args()
-    raise SystemExit(args.func(args))
+def main(argv: list[str] | None = None) -> None:
+    args = build_parser().parse_args(argv)
+    try:
+        code = int(args.func(args))
+    except (FileNotFoundError, ValueError, KeyError) as exc:
+        # Fail closed with a machine-readable reason instead of a traceback.
+        _json({"status": "FAIL", "command": args.command, "error": f"{exc.__class__.__name__}: {exc}"})
+        code = 2
+    raise SystemExit(code)
 
 
 if __name__ == "__main__":

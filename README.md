@@ -1,5 +1,5 @@
 # UNFILED-IP
-# ECZIS v0.1R1 — Executable Software Proof
+# ECZIS v0.1R1 (v0.1.1) — Executable Software Proof
 
 **Owner:** Ron Blake  
 **Disclosure status:** UNFILED — keep the repository private.  
@@ -10,11 +10,11 @@ This repository contains the first runnable ECZIS vertical slice:
 1. deterministic procedural microglyph ground truth;
 2. an independent `TruthCameraModel` that creates noisy RAW-like burst observations;
 3. a deliberately imperfect `EstimatedCameraModel` used for reconstruction and gating;
-4. bicubic, registered shift-and-add, and regularized MAP reconstruction;
-5. a noise-normalized cycle-consistency gate;
-6. conservative M/R/I/U provenance;
-7. a provenance-preserving continuous renderer;
-8. hash-chained ledger and HMAC-sealed evidence bundle;
+4. bicubic, single-frame deconvolution, registered shift-and-add, and regularized MAP reconstruction;
+5. a noise-normalized cycle-consistency gate with a per-frame contradiction criterion (K-1 attack);
+6. conservative M/R/I/U provenance in which R additionally requires supported-band identifiability (ADR-0002);
+7. provenance-preserving continuous renderers (tiled raster baseline; optional Fourier-feature field);
+8. hash-chained, lock-serialized, HMAC-anchored ledger and HMAC-sealed evidence bundle with replay metadata;
 9. mutation verification;
 10. an offline forensic viewer; and
 11. an automated adversarial test that injects a false microglyph and verifies demotion.
@@ -30,7 +30,7 @@ Set-ExecutionPolicy -Scope Process Bypass -Force
 .\Run-ECZIS.ps1 -OpenViewer
 ```
 
-The script installs the environment through `uv`, runs the automated tests, creates the synthetic evidence bundle, verifies it, and opens the offline viewer. Add `-RunStaticAnalysis` after `mypy` and `ruff` have resolved on the workstation.
+The script installs the environment through `uv`, runs the IP and evidence guards, the automated tests (JUnit), the executed claims gate, creates the synthetic evidence bundle, verifies it, writes `release_manifest.json`, and opens the offline viewer. Add `-RunStaticAnalysis` for ruff + `mypy --strict`, and `-InstallHooks` once to enable the pre-commit/pre-push gates.
 
 ## Direct commands
 
@@ -40,6 +40,18 @@ uv run eczis doctor
 uv run pytest
 uv run eczis demo --output .\artifacts\demo --seed 20260803 --frames 16 --iterations 36
 uv run eczis verify --bundle .\artifacts\demo\eczis_demo.eczis --key .\artifacts\demo\DEMO_ONLY.key
+uv run eczis export --bundle .\artifacts\demo\eczis_demo.eczis --key .\artifacts\demo\DEMO_ONLY.key --output .\artifacts\export
+uv run eczis bench --split locked_test --output .\artifacts\bench      # 5 families x 3 seeds x 2 arms
+uv run eczis key create --output $env:LOCALAPPDATA\ECZIS\seal.key       # DPAPI-wrapped on Windows
+uv run python tools/install_hooks.py                                      # pre-commit / pre-push gates
+```
+
+## Release gates
+
+```powershell
+uv run pytest --junitxml artifacts\test-results.xml
+uv run python tools/claims_check.py --junit artifacts\test-results.xml
+uv run python tools/verify_release.py --junit artifacts\test-results.xml --bundle .\artifacts\demo\eczis_demo.eczis --key .\artifacts\demo\DEMO_ONLY.key
 ```
 
 ## Staged workflow
@@ -49,7 +61,7 @@ uv run eczis target create --output .\artifacts\staged\target --seed 20260803
 uv run eczis capture simulate --target .\artifacts\staged\target --output .\artifacts\staged\capture.npz --seed 20260803 --frames 16
 uv run eczis reconstruct --capture .\artifacts\staged\capture.npz --output .\artifacts\staged\recon --iterations 36
 uv run eczis gate --capture .\artifacts\staged\capture.npz --reconstruction .\artifacts\staged\recon\map.npy --output .\artifacts\staged\gate --threshold 8
-uv run eczis provenance --capture .\artifacts\staged\capture.npz --gate .\artifacts\staged\gate --output .\artifacts\staged\provenance
+uv run eczis provenance --capture .\artifacts\staged\capture.npz --reconstruction .\artifacts\staged\recon\map.npy --gate .\artifacts\staged\gate --output .\artifacts\staged\provenance
 uv run eczis render --reconstruction .\artifacts\staged\recon\map.npy --gate .\artifacts\staged\gate --provenance .\artifacts\staged\provenance --output .\artifacts\staged\viewer.html
 ```
 

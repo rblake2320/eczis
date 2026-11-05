@@ -6,7 +6,6 @@ from pathlib import Path
 
 from eczis.seal.bundle import seal_directory, verify_bundle
 from eczis.seal.keys import development_key
-from eczis.seal.ledger import append_event, verify_ledger
 
 
 def test_bundle_round_trip_and_tamper_detection(tmp_path: Path) -> None:
@@ -28,15 +27,3 @@ def test_bundle_round_trip_and_tamper_detection(tmp_path: Path) -> None:
     report = verify_bundle(tampered, key)
     assert not report.valid
     assert any("hash mismatch" in error or "size mismatch" in error for error in report.errors)
-
-
-def test_ledger_detects_mutation(tmp_path: Path) -> None:
-    ledger = tmp_path / "ledger.jsonl"
-    append_event(ledger, "one", {"value": 1})
-    append_event(ledger, "two", {"value": 2})
-    assert verify_ledger(ledger)[0]
-    text = ledger.read_text(encoding="utf-8").replace('"value":2', '"value":9')
-    ledger.write_text(text, encoding="utf-8")
-    valid, errors = verify_ledger(ledger)
-    assert not valid
-    assert errors

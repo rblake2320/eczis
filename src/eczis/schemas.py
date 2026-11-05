@@ -46,6 +46,10 @@ class RawFrame:
             raise ValueError("RAW frame masks must match data shape")
         if self.data.dtype != np.float32:
             raise TypeError("RAW data must be float32")
+        if self.valid_mask.dtype != np.bool_ or self.saturation_mask.dtype != np.bool_:
+            raise TypeError("RAW masks must be boolean")
+        if np.any(self.valid_mask & self.saturation_mask):
+            raise ValueError("Saturated samples must not be marked valid")
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +77,13 @@ class CaptureSet:
         if not self.frames:
             raise ValueError("Capture set must contain frames")
         expected = self.calibration.sensor_shape
+        if self.calibration.scale < 1:
+            raise ValueError("Calibration scale must be >= 1")
+        if self.calibration.shot_electrons <= 0 or self.calibration.read_noise_std < 0:
+            raise ValueError("Calibration noise parameters are invalid")
+        ids = [frame.params.frame_id for frame in self.frames]
+        if len(set(ids)) != len(ids):
+            raise ValueError("Capture frame ids must be unique")
         for frame in self.frames:
             frame.validate()
             if frame.data.shape != expected:
